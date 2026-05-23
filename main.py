@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""诸葛幸福 — 人生发展 Agent CLI"""
+"""诸葛策 — 人生发展 Agent CLI"""
 
+import io
 import sys
 import json
 import re
@@ -9,6 +10,14 @@ import shutil
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
+
+# 兜底：stdout 遇到无效字符用 ? 替代而非崩溃
+sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+
+
+# ── 移除 surrogate 字符 ──
+def _sanitize(text: str) -> str:
+    return ''.join(ch for ch in text if not (0xD800 <= ord(ch) <= 0xDFFF))
 
 from agent import MingYuanAgent
 from memory import load_profile, DATA_DIR
@@ -120,11 +129,9 @@ def print_welcome(is_returning: bool):
     period = "早上" if now.hour < 12 else "下午" if now.hour < 18 else "晚上"
 
     if not is_returning:
-        time_str = now.strftime("%Y-%m-%d %H:%M")
         draw_box([
             [],
-            [c("诸葛幸福 ", C.BOLD, C.CYAN), c("· 人生发展导师", C.YELLOW)],
-            [c(time_str, C.DIM)],
+            [c("诸葛策 · 个人战略引擎", C.BOLD, C.CYAN)],
             [],
             [c("家庭 · 职场 · 创业 · 健康 · 财务 · 社交 · 学习 · 精神", C.DIM)],
             [],
@@ -152,10 +159,9 @@ def print_welcome(is_returning: bool):
 
         rows = [
             [],
-            [c("诸葛幸福 ", C.BOLD, C.CYAN),
-             c(f"· {period}好，", C.YELLOW),
-             c(name, C.BOLD, C.MAGENTA)],
-            [c(time_str, C.DIM)],
+            [c("诸葛策 · 个人战略引擎", C.BOLD, C.CYAN)],
+            [],
+            [c(f"{period}好，", C.YELLOW), c(name, C.BOLD, C.MAGENTA), c(f"，现在是{time_str}", C.YELLOW)],
         ]
 
         # 每日摘要
@@ -204,7 +210,7 @@ def main():
     args = sys.argv[1:]
 
     if args and args[0] == "--help":
-        print("诸葛幸福 — 人生发展导师")
+        print("诸葛策 — 个人战略引擎")
         print()
         print("用法:")
         print("  source .venv/bin/activate    直接开始对话")
@@ -236,7 +242,7 @@ def main():
     while True:
         if user_input.lower() in ("exit", "quit"):
             print()
-            print(f"  {C.BOLD}{C.CYAN}诸葛幸福:{C.RESET} 下次见。")
+            print(f"  {C.BOLD}{C.CYAN}诸葛策:{C.RESET} 下次见。")
             break
         if not user_input:
             user_input = input(f"  {C.GREEN}你{C.RESET}: ").strip()
@@ -244,19 +250,20 @@ def main():
 
         try:
             for msg_type, content in agent.chat(user_input):
+                safe = _sanitize(content)
                 if msg_type == "text":
-                    print(f"  {C.BOLD}{C.CYAN}诸葛幸福:{C.RESET} {content}")
+                    print(f"  {C.BOLD}{C.CYAN}诸葛策:{C.RESET} {safe}")
                 elif msg_type == "tool_start":
-                    print(f"  {C.DIM}[{content}]{C.RESET}")
+                    print(f"  {C.DIM}[{safe}]{C.RESET}")
         except KeyboardInterrupt:
             print()
-            print(f"  {C.BOLD}{C.CYAN}诸葛幸福:{C.RESET} 下次见。")
+            print(f"  {C.BOLD}{C.CYAN}诸葛策:{C.RESET} 下次见。")
             break
         except Exception as e:
             print(f"\n  {C.DIM}错误: {e}{C.RESET}")
             return 1
 
-        print()
+        print(f"   {C.CYAN}─── ─── ─── ─── ─── ─── ───{C.RESET}")
         user_input = input(f"  {C.GREEN}你{C.RESET}: ").strip()
 
     return 0

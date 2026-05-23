@@ -3,8 +3,9 @@
 import json
 from datetime import date
 
-from memory import save_profile, save_journal, save_decision, load_full_context
+from memory import save_profile, save_journal, save_decision, load_full_context, _sanitize
 from bazi import calculate_bazi as _calc_bazi
+from wisdom import search_wisdom as _search_wisdom, format_wisdom as _format_wisdom
 
 TOOL_DEFINITIONS = [
     {
@@ -107,6 +108,23 @@ TOOL_DEFINITIONS = [
                 },
             },
             "required": ["birth_year", "birth_month", "birth_day"],
+        },
+    },
+    {
+        "name": "search_wisdom",
+        "description": "检索成功人士的价值观、理念和行动指南。当你给用户建议时，可以查询相关人物的真实理念来丰富你的指导。支持按人名或领域搜索。",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "figure": {
+                    "type": "string",
+                    "description": "人物名，如'马斯克''纳瓦尔''巴菲特'等。可选，留空则按领域搜索。",
+                },
+                "domain": {
+                    "type": "string",
+                    "description": "领域关键词，如'创业''投资''产品''幸福'等。可选，留空则按人物名搜索。",
+                },
+            },
         },
     },
 ]
@@ -225,10 +243,31 @@ def handle_calculate_bazi(input_data: dict) -> str:
 请基于以上八字命盘数据，结合用户的完整背景，给出命理解读和结合现实的建议："""
 
 
+def handle_search_wisdom(input_data: dict) -> str:
+    figure = input_data.get("figure", "")
+    domain = input_data.get("domain", "")
+    results = _search_wisdom(figure=figure, domain=domain)
+
+    if not results:
+        return f"未找到相关人物。可用人物：{'、'.join(e['name'] for e in _search_wisdom())}"
+
+    if len(results) == 1:
+        return _format_wisdom(results[0])
+    else:
+        lines = [f"找到 {len(results)} 位相关人物：", ""]
+        for r in results:
+            lines.append(f"- **{r['name']}**（{r['name_en']}）— {'、'.join(r['domains'][:3])}")
+            lines.append(f"  {r['summary']}")
+        lines.append("")
+        lines.append("可输入具体人物名查看详细信息。")
+        return "\n".join(lines)
+
+
 TOOL_HANDLERS = {
     "save_memory": handle_save_memory,
     "load_context": handle_load_context,
     "analyze_situation": handle_analyze_situation,
     "analyze_decision": handle_analyze_decision,
     "calculate_bazi": handle_calculate_bazi,
+    "search_wisdom": handle_search_wisdom,
 }
