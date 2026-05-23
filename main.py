@@ -120,9 +120,11 @@ def print_welcome(is_returning: bool):
     period = "早上" if now.hour < 12 else "下午" if now.hour < 18 else "晚上"
 
     if not is_returning:
+        time_str = now.strftime("%Y-%m-%d %H:%M")
         draw_box([
             [],
             [c("诸葛幸福 ", C.BOLD, C.CYAN), c("· 人生发展导师", C.YELLOW)],
+            [c(time_str, C.DIM)],
             [],
             [c("家庭 · 职场 · 创业 · 健康 · 财务 · 社交 · 学习 · 精神", C.DIM)],
             [],
@@ -146,11 +148,14 @@ def print_welcome(is_returning: bool):
                 if isinstance(d_val, dict):
                     active_goals.extend(d_val.get("goals", []))
 
+        time_str = now.strftime("%Y-%m-%d %H:%M")
+
         rows = [
             [],
             [c("诸葛幸福 ", C.BOLD, C.CYAN),
              c(f"· {period}好，", C.YELLOW),
              c(name, C.BOLD, C.MAGENTA)],
+            [c(time_str, C.DIM)],
         ]
 
         # 每日摘要
