@@ -511,8 +511,6 @@ def print_welcome(is_returning: bool):
         days = _days_since_last()
         pending = _pending_decisions_count()
         summary_parts = []
-        if days is not None:
-            summary_parts.append(f"上次来访: {days} 天前")
         if pending > 0:
             summary_parts.append(f"{pending} 个决策待跟进")
         if summary_parts:
