@@ -631,6 +631,9 @@ def main():
                     print(f"  {C.DIM}[{safe}]{C.RESET}")
                 spinner = Spinner()
                 spinner.start()
+            spinner.stop()
+            _clear_line()
+            print(f"{C.CYAN}─── ─── ─── ─── ─── ─── ───{C.RESET}")
         except KeyboardInterrupt:
             print()
             print(f"{C.BOLD}{C.CYAN}诸葛策:{C.RESET} 下次见。")
