@@ -7,6 +7,7 @@ import json
 import re
 import random
 import shutil
+import select
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -19,8 +20,23 @@ sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="repla
 def _sanitize(text: str) -> str:
     return ''.join(ch for ch in text if not (0xD800 <= ord(ch) <= 0xDFFF))
 
+
+def _read_input(prompt: str) -> str:
+    """读取多行输入，支持粘贴大段文字。"""
+    lines = [input(prompt).strip()]
+    # 粘贴多行时 stdin 缓冲区还有数据，select 非阻塞读取剩余行
+    try:
+        while select.select([sys.stdin], [], [], 0) == ([sys.stdin], [], []):
+            line = sys.stdin.readline()
+            if not line:
+                break
+            lines.append(line.strip())
+    except (ValueError, TypeError):
+        pass
+    return " ".join(lines)
+
 from agent import MingYuanAgent
-from memory import load_profile, DATA_DIR
+from memory import load_profile, set_user, get_user, get_user_dir
 
 
 # ── 成功谚语 ──
@@ -199,23 +215,42 @@ def cmd_profile():
 
 
 def cmd_reset():
-    journal_file = DATA_DIR / "journal.jsonl"
+    journal_file = get_user_dir() / "journal.jsonl"
     if journal_file.exists():
         journal_file.unlink()
-    print("对话历史已重置，你的档案和决策记录还在。")
+    print(f"对话历史已重置（用户: {get_user()}），档案和决策记录还在。")
     return 0
 
 
 def main():
-    args = sys.argv[1:]
+    argv = sys.argv[1:]
+
+    # 解析 --user <name>
+    args = []
+    i = 0
+    while i < len(argv):
+        if argv[i] == "--user" and i + 1 < len(argv):
+            set_user(argv[i + 1])
+            i += 2
+        elif argv[i] == "--user":
+            i += 1
+        else:
+            args.append(argv[i])
+            i += 1
+
+    # 从 data/ 迁移到 data/{user}/
+    from memory import _migrate_from_root as _migrate
+    _migrate()
+    user_id = get_user()
 
     if args and args[0] == "--help":
         print("诸葛策 — 个人战略引擎")
         print()
         print("用法:")
-        print("  source .venv/bin/activate    直接开始对话")
-        print("  --profile                     查看档案")
-        print("  --reset                       重置对话历史")
+        print("  source .venv/bin/activate                直接开始对话")
+        print("  --profile                                查看档案")
+        print("  --reset                                  重置对话历史")
+        print(f"  --user {user_id}                           指定用户（默认 default）")
         return 0
 
     if args and args[0] == "--profile":
@@ -237,34 +272,35 @@ def main():
         print_welcome(is_returning)
     else:
         print_welcome(is_returning)
-        user_input = input("你: ").strip()
+        user_input = _read_input(f"{C.GREEN}你{C.RESET}: ")
 
     while True:
         if user_input.lower() in ("exit", "quit"):
             print()
-            print(f"  {C.BOLD}{C.CYAN}诸葛策:{C.RESET} 下次见。")
+            print(f"{C.BOLD}{C.CYAN}诸葛策:{C.RESET} 下次见。")
             break
         if not user_input:
-            user_input = input(f"  {C.GREEN}你{C.RESET}: ").strip()
+            user_input = _read_input(f"{C.GREEN}你{C.RESET}: ")
             continue
+
+        print(f"{C.CYAN}─── ─── ─── ─── ─── ─── ───{C.RESET}")
 
         try:
             for msg_type, content in agent.chat(user_input):
                 safe = _sanitize(content)
                 if msg_type == "text":
-                    print(f"  {C.BOLD}{C.CYAN}诸葛策:{C.RESET} {safe}")
+                    print(f"{C.BOLD}{C.CYAN}诸葛策:{C.RESET} {safe}")
                 elif msg_type == "tool_start":
                     print(f"  {C.DIM}[{safe}]{C.RESET}")
         except KeyboardInterrupt:
             print()
-            print(f"  {C.BOLD}{C.CYAN}诸葛策:{C.RESET} 下次见。")
+            print(f"{C.BOLD}{C.CYAN}诸葛策:{C.RESET} 下次见。")
             break
         except Exception as e:
             print(f"\n  {C.DIM}错误: {e}{C.RESET}")
             return 1
 
-        print(f"   {C.CYAN}─── ─── ─── ─── ─── ─── ───{C.RESET}")
-        user_input = input(f"  {C.GREEN}你{C.RESET}: ").strip()
+        user_input = _read_input(f"{C.GREEN}你{C.RESET}: ")
 
     return 0
 
