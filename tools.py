@@ -101,6 +101,10 @@ TOOL_DEFINITIONS = [
                     "type": "integer",
                     "description": "出生时辰（0-23），不知道则填 -1",
                 },
+                "birth_minute": {
+                    "type": "integer",
+                    "description": "出生分钟（0-59），不知道则填 0",
+                },
                 "gender": {
                     "type": "string",
                     "enum": ["male", "female"],
@@ -224,6 +228,7 @@ def handle_calculate_bazi(input_data: dict) -> str:
         birth_month=input_data["birth_month"],
         birth_day=input_data["birth_day"],
         birth_hour=input_data.get("birth_hour", -1),
+        birth_minute=input_data.get("birth_minute", 0),
         gender=input_data.get("gender"),
     )
 

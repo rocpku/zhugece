@@ -2,12 +2,19 @@
 """诸葛策 — 人生发展 Agent CLI"""
 
 import io
+import os
 import sys
 import json
 import re
 import random
 import shutil
 import select
+import termios
+import tty
+import threading
+import time
+import atexit
+import signal
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -15,25 +22,345 @@ from typing import Optional
 # 兜底：stdout 遇到无效字符用 ? 替代而非崩溃
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 
+# ── 终端安全：确保程序退出时恢复终端 ──
+_saved_termios = [None]  # list 包裹以便闭包修改
+_saved_termios_fd = [None]
+
+
+def _restore_termios_atexit():
+    """退出时恢复终端（无论如何退出）。"""
+    fd = _saved_termios_fd[0]
+    old = _saved_termios[0]
+    if fd is not None and old is not None:
+        try:
+            termios.tcsetattr(fd, termios.TCSADRAIN, old)
+        except Exception:
+            pass
+
+
+atexit.register(_restore_termios_atexit)
+signal.signal(signal.SIGTERM, lambda *a: _restore_termios_atexit() or sys.exit(1))
+signal.signal(signal.SIGHUP, lambda *a: _restore_termios_atexit() or sys.exit(1))
+
 
 # ── 移除 surrogate 字符 ──
 def _sanitize(text: str) -> str:
     return ''.join(ch for ch in text if not (0xD800 <= ord(ch) <= 0xDFFF))
 
 
-def _read_input(prompt: str) -> str:
-    """读取多行输入，支持粘贴大段文字。"""
-    lines = [input(prompt).strip()]
-    # 粘贴多行时 stdin 缓冲区还有数据，select 非阻塞读取剩余行
+# ── 思考动画 ──
+
+class Spinner:
+    """动态思考指示器，在后台线程运行。"""
+    CHARS = '⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
+
+    def __init__(self, text="思考中"):
+        self.text = text
+        self._running = False
+        self._thread = None
+
+    def start(self):
+        self._running = True
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def stop(self):
+        self._running = False
+        if self._thread:
+            self._thread.join(0.3)
+
+    def _run(self):
+        i = 0
+        while self._running:
+            ch = self.CHARS[i % len(self.CHARS)]
+            sys.stdout.write(f"\r{C.DIM}{ch} {self.text}…{C.RESET}")
+            sys.stdout.flush()
+            i += 1
+            time.sleep(0.08)
+
+
+class InputBuffer:
+    """在 Agent 思考时在后台线程读取用户键盘输入。"""
+
+    def __init__(self, fd: int):
+        self.fd = fd
+        self._buffer = []
+        self._lock = threading.Lock()
+        self._running = False
+        self._thread = None
+
+    def start(self):
+        self._running = True
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def stop(self):
+        self._running = False
+        if self._thread:
+            self._thread.join(0.3)
+
+    def _run(self):
+        while self._running:
+            ready, _, _ = select.select([self.fd], [], [], 0.1)
+            if ready:
+                chunk = os.read(self.fd, 65536)
+                if chunk:
+                    with self._lock:
+                        self._buffer.append(chunk)
+
+    def get_and_clear(self) -> str:
+        with self._lock:
+            raw = b"".join(self._buffer)
+            self._buffer.clear()
+        if not raw:
+            return ""
+        text = raw.decode("utf-8", errors="replace")
+        while "\x7f" in text:
+            text = re.sub(r".\x7f", "", text, count=1)
+        text = text.replace("\x7f", "")
+        lines = [l.strip() for l in text.split("\n") if l.strip()]
+        return " ".join(lines).strip()
+
+
+def _clear_line():
+    """清除当前行。"""
+    sys.stdout.write("\r\033[K")
+    sys.stdout.flush()
+
+
+def _term_thinking_mode(fd: int):
+    """将终端设为思考模式：非规范、不回显。"""
+    old = None
     try:
-        while select.select([sys.stdin], [], [], 0) == ([sys.stdin], [], []):
-            line = sys.stdin.readline()
-            if not line:
-                break
-            lines.append(line.strip())
-    except (ValueError, TypeError):
+        old = termios.tcgetattr(fd)
+        new = termios.tcgetattr(fd)
+        new[tty.LFLAG] &= ~(termios.ICANON | termios.ECHO)
+        new[tty.IFLAG] |= termios.ICRNL
+        new[tty.CC][termios.VMIN] = 1
+        new[tty.CC][termios.VTIME] = 0
+        termios.tcsetattr(fd, termios.TCSADRAIN, new)
+    except termios.error:
         pass
-    return " ".join(lines)
+    return old
+
+
+def _restore_terminal(fd: int, old):
+    if old is not None:
+        try:
+            termios.tcsetattr(fd, termios.TCSADRAIN, old)
+        except termios.error:
+            pass
+
+
+def _is_cjk(ch: str) -> bool:
+    """CJK 统一表意文字占 2 列"""
+    cp = ord(ch)
+    return (0x4E00 <= cp <= 0x9FFF) or (0x3000 <= cp <= 0x303F) or (0xFF00 <= cp <= 0xFFEF)
+
+
+def _read_input(prompt: str) -> str:
+    """非规范模式输入：支持粘贴、光标移动、中间插入、回退。"""
+    fd = sys.stdin.fileno()
+    old = None
+    try:
+        old = termios.tcgetattr(fd)
+        new = termios.tcgetattr(fd)
+        new[tty.LFLAG] &= ~(termios.ICANON | termios.ECHO)
+        new[tty.IFLAG] |= termios.ICRNL
+        new[tty.CC][termios.VMIN] = 1
+        new[tty.CC][termios.VTIME] = 0
+        termios.tcsetattr(fd, termios.TCSADRAIN, new)
+        _saved_termios[0] = old
+        _saved_termios_fd[0] = fd
+    except termios.error:
+        pass
+
+    buf = []          # 字符缓冲区
+    cursor = 0        # 光标在 buf 中的位置（字符索引）
+    partial = b''
+    last_read_size = 0
+
+    # ── 辅助函数 ──
+
+    def _char_width(ch: str) -> int:
+        return 2 if _is_cjk(ch) else 1
+
+    def _buf_visible(end=None) -> int:
+        """buf[:end] 的终端显示宽度"""
+        return sum(_char_width(c) for c in buf[:end])
+
+    def _redraw():
+        """重绘整行并定位光标。"""
+        prompt_w = _render_width(prompt)
+        col = prompt_w + _buf_visible(cursor)
+        sys.stdout.write("\r\033[K")
+        sys.stdout.write(prompt)
+        sys.stdout.write("".join(buf))
+        sys.stdout.write(f"\033[{col + 1}G")
+        sys.stdout.flush()
+
+    def submit() -> str:
+        result = "".join(buf).strip()
+        if result and len(result) > 100:
+            print(f"{C.DIM}[已接收 {len(result)} 字符]{C.RESET}")
+        return result
+
+    def save_termios():
+        nonlocal old
+        if old is not None:
+            try:
+                termios.tcsetattr(fd, termios.TCSADRAIN, old)
+            except termios.error:
+                pass
+
+    # 初始绘制
+    _redraw()
+
+    # ── 逐字节解析 ──
+
+    try:
+        while True:
+            raw = os.read(fd, 65536)
+            if not raw:
+                break
+            last_read_size = len(raw)
+            partial += raw
+
+            proc = 0
+            changed = False  # 批量处理后再重绘
+
+            while proc < len(partial):
+                b = partial[proc]
+
+                # ── 转义序列（箭头键等）──
+                if b == 27:
+                    if (proc + 2 < len(partial)
+                            and partial[proc + 1] == ord("[")):
+                        cmd = partial[proc + 2]
+                        if cmd == ord("D"):  # ←
+                            if cursor > 0:
+                                cursor -= 1
+                                _redraw()
+                        elif cmd == ord("C"):  # →
+                            if cursor < len(buf):
+                                cursor += 1
+                                _redraw()
+                        elif cmd == ord("H") or cmd == ord("1"):  # Home
+                            cursor = 0
+                            _redraw()
+                        elif cmd == ord("F") or cmd == ord("4"):  # End
+                            cursor = len(buf)
+                            _redraw()
+                        proc += 3
+                        continue
+                    proc += 1
+                    continue
+
+                # ── Enter ──
+                if b == 10:
+                    if proc < len(partial) - 1:
+                        # 粘贴换行 → 空格
+                        buf.insert(cursor, " ")
+                        cursor += 1
+                        changed = True
+                        proc += 1
+                        continue
+                    timeout = 0.5 if last_read_size > 200 else 0.15
+                    ready, _, _ = select.select([fd], [], [], timeout)
+                    if not ready:
+                        save_termios()
+                        sys.stdout.write("\n")
+                        sys.stdout.flush()
+                        return submit()
+                    buf.insert(cursor, " ")
+                    cursor += 1
+                    changed = True
+                    proc += 1
+                    continue
+
+                if b == 13:  # \r
+                    proc += 1
+                    continue
+
+                # ── Backspace ──
+                if b in (127, 8):
+                    if cursor > 0:
+                        cursor -= 1
+                        del buf[cursor]
+                        _redraw()
+                    proc += 1
+                    continue
+
+                if b == 3:  # Ctrl+C
+                    save_termios()
+                    raise KeyboardInterrupt
+
+                if b == 4:  # Ctrl+D
+                    proc += 1
+                    continue
+
+                if b < 32:  # 其他控制字符
+                    proc += 1
+                    continue
+
+                # ── 可打印字符（ASCII / 多字节 UTF-8）──
+                if b & 0x80 == 0:  # ASCII
+                    ch = chr(b)
+                    buf.insert(cursor, ch)
+                    cursor += 1
+                    changed = True
+                    proc += 1
+                else:  # 多字节 UTF-8
+                    if b & 0xE0 == 0xC0:
+                        need = 2
+                    elif b & 0xF0 == 0xE0:
+                        need = 3
+                    elif b & 0xF8 == 0xF0:
+                        need = 4
+                    else:
+                        proc += 1
+                        continue
+                    if proc + need > len(partial):
+                        break
+                    try:
+                        ch = partial[proc:proc + need].decode("utf-8")
+                        buf.insert(cursor, ch)
+                        cursor += 1
+                        changed = True
+                        proc += need
+                    except UnicodeDecodeError:
+                        proc += 1
+                        continue
+
+            partial = partial[proc:]
+            if changed:
+                _redraw()
+
+    except KeyboardInterrupt:
+        return ""
+    except Exception:
+        pass
+    finally:
+        if old is not None:
+            try:
+                termios.tcsetattr(fd, termios.TCSADRAIN, old)
+            except termios.error:
+                pass
+        try:
+            import fcntl
+            fl = fcntl.fcntl(fd, fcntl.F_GETFL)
+            fcntl.fcntl(fd, fcntl.F_SETFL, fl | os.O_NONBLOCK)
+            os.read(fd, 65536)
+        except Exception:
+            pass
+        finally:
+            try:
+                fcntl.fcntl(fd, fcntl.F_SETFL, fl)
+            except Exception:
+                pass
+
+    return submit()
+
 
 from agent import MingYuanAgent
 from memory import load_profile, set_user, get_user, get_user_dir
@@ -250,7 +577,7 @@ def main():
         print("  source .venv/bin/activate                直接开始对话")
         print("  --profile                                查看档案")
         print("  --reset                                  重置对话历史")
-        print(f"  --user {user_id}                           指定用户（默认 default）")
+        print(f"  --user <name>                           指定用户（默认 chenpeng）")
         return 0
 
     if args and args[0] == "--profile":
@@ -285,13 +612,25 @@ def main():
 
         print(f"{C.CYAN}─── ─── ─── ─── ─── ─── ───{C.RESET}")
 
+        # 进入思考模式：非规范 + 不回显，后台捕获键盘输入
+        fd = sys.stdin.fileno()
+        think_old = _term_thinking_mode(fd)
+        buf = InputBuffer(fd)
+        spinner = Spinner()
+        buf.start()
+        spinner.start()
+
         try:
             for msg_type, content in agent.chat(user_input):
+                spinner.stop()
+                _clear_line()
                 safe = _sanitize(content)
                 if msg_type == "text":
                     print(f"{C.BOLD}{C.CYAN}诸葛策:{C.RESET} {safe}")
                 elif msg_type == "tool_start":
                     print(f"  {C.DIM}[{safe}]{C.RESET}")
+                spinner = Spinner()
+                spinner.start()
         except KeyboardInterrupt:
             print()
             print(f"{C.BOLD}{C.CYAN}诸葛策:{C.RESET} 下次见。")
@@ -299,6 +638,22 @@ def main():
         except Exception as e:
             print(f"\n  {C.DIM}错误: {e}{C.RESET}")
             return 1
+        finally:
+            spinner.stop()
+            buf.stop()
+            _restore_terminal(fd, think_old)
+            _clear_line()
+
+        # 检查思考期间用户是否有输入
+        buffered = buf.get_and_clear()
+        if buffered:
+            if buffered.lower() in ("exit", "quit"):
+                print()
+                print(f"{C.BOLD}{C.CYAN}诸葛策:{C.RESET} 下次见。")
+                break
+            print(f"{C.GREEN}你{C.RESET}: {buffered}")
+            user_input = buffered
+            continue
 
         user_input = _read_input(f"{C.GREEN}你{C.RESET}: ")
 
