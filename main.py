@@ -51,13 +51,16 @@ def _sanitize(text: str) -> str:
 # ── 思考动画 ──
 
 class Spinner:
-    """动态思考指示器，在后台线程运行。"""
+    """动态思考指示器，在后台线程运行。显示已耗时和步骤进度。"""
     CHARS = '⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
 
-    def __init__(self, text="思考中"):
+    def __init__(self, text="思考中", step: int = 0, total_steps: int = None):
         self.text = text
         self._running = False
         self._thread = None
+        self._start = time.time()
+        self._step = step
+        self._total = total_steps
 
     def start(self):
         self._running = True
@@ -72,8 +75,16 @@ class Spinner:
     def _run(self):
         i = 0
         while self._running:
+            elapsed = int(time.time() - self._start)
             ch = self.CHARS[i % len(self.CHARS)]
-            sys.stdout.write(f"\r{C.DIM}{ch} {self.text}…{C.RESET}")
+            parts = [f"{ch} {self.text}"]
+            if self._step > 0:
+                parts.append(f"#{self._step}")
+                if self._total:
+                    parts[-1] += f"/{self._total}"
+            if elapsed >= 3:
+                parts.append(f"{elapsed}s")
+            sys.stdout.write(f"\r{C.DIM}{' '.join(parts)}…{C.RESET}")
             sys.stdout.flush()
             i += 1
             time.sleep(0.08)
@@ -614,7 +625,8 @@ def main():
         fd = sys.stdin.fileno()
         think_old = _term_thinking_mode(fd)
         buf = InputBuffer(fd)
-        spinner = Spinner()
+        tool_step = 0
+        spinner = Spinner(step=tool_step)
         buf.start()
         spinner.start()
 
@@ -626,8 +638,9 @@ def main():
                 if msg_type == "text":
                     print(f"{C.BOLD}{C.CYAN}诸葛策:{C.RESET} {safe}")
                 elif msg_type == "tool_start":
+                    tool_step += 1
                     print(f"  {C.DIM}[{safe}]{C.RESET}")
-                spinner = Spinner()
+                spinner = Spinner(step=tool_step)
                 spinner.start()
             spinner.stop()
             _clear_line()
