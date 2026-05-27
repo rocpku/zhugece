@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Optional
 
 # 兜底：stdout 遇到无效字符用 ? 替代而非崩溃
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace", line_buffering=True)
 
 # ── 终端安全：确保程序退出时恢复终端 ──
 _saved_termios = [None]  # list 包裹以便闭包修改
@@ -335,6 +335,7 @@ def _read_input(prompt: str, initial: str = "") -> str:
         sys.stdout.write(f"\033[{target_col + 1}G")
 
         _prev_term_lines = new_rows
+        sys.stdout.flush()
 
     def submit() -> str:
         result = "".join(buf).strip()
