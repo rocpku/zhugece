@@ -142,16 +142,16 @@ class ThinkingUI:
         # 第2行：输入行
         if pending:
             text = "".join(buf) if buf else "（消息已暂存，思考完成后自动提交）"
-            sys.stdout.write(f"\033[K{C.DIM}{C.GREEN}你{C.RESET}{C.DIM} {text}{C.RESET}")
+            sys.stdout.write(f"\033[J{C.DIM}{C.GREEN}你{C.RESET}{C.DIM} {text}{C.RESET}")
         elif buf:
             text = "".join(buf)
             prompt = f"{C.GREEN}你{C.RESET}: "
             prompt_w = _render_width(prompt)
             input_col = sum(2 if _is_cjk(c) else 1 for c in buf[:cursor])
-            sys.stdout.write(f"\033[K{prompt}{text}")
+            sys.stdout.write(f"\033[J{prompt}{text}")
             sys.stdout.write(f"\033[{prompt_w + input_col + 1}G")
         else:
-            sys.stdout.write(f"\033[K{C.GREEN}你{C.RESET}: ")
+            sys.stdout.write(f"\033[J{C.GREEN}你{C.RESET}: ")
 
         # 光标留在输入行（不返回第1行）
         sys.stdout.flush()
@@ -308,15 +308,33 @@ def _read_input(prompt: str, initial: str = "") -> str:
         """buf[:end] 的终端显示宽度"""
         return sum(_char_width(c) for c in buf[:end])
 
+    _prev_term_lines = 1
+
     def _redraw():
-        """重绘整行并定位光标。"""
+        """重绘并定位光标，正确处理换行（跟踪上次行数避免残影）。"""
+        nonlocal _prev_term_lines
+        term_width = shutil.get_terminal_size().columns or 80
         prompt_w = _render_width(prompt)
-        col = prompt_w + _buf_visible(cursor)
-        sys.stdout.write("\r\033[K")
+        buf_str = "".join(buf)
+
+        total_w = prompt_w + _buf_visible(len(buf))
+        new_rows = max(1, (total_w + term_width - 1) // term_width)
+
+        # 回到上次绘制的第一行，清空到屏幕底部
+        if _prev_term_lines > 1:
+            sys.stdout.write(f"\033[{_prev_term_lines - 1}A")
+        sys.stdout.write("\r\033[J")
+
+        # 写入内容
         sys.stdout.write(prompt)
-        sys.stdout.write("".join(buf))
-        sys.stdout.write(f"\033[{col + 1}G")
-        sys.stdout.flush()
+        sys.stdout.write(buf_str)
+
+        # 定位光标
+        cursor_abs = prompt_w + _buf_visible(cursor)
+        target_col = cursor_abs % term_width
+        sys.stdout.write(f"\033[{target_col + 1}G")
+
+        _prev_term_lines = new_rows
 
     def submit() -> str:
         result = "".join(buf).strip()
@@ -378,12 +396,20 @@ def _read_input(prompt: str, initial: str = "") -> str:
                 # ── Enter ──
                 if b == 10:
                     if proc < len(partial) - 1:
-                        # 粘贴换行 → 空格
+                        # 粘贴流中间的换行 → 空格
                         buf.insert(cursor, " ")
                         cursor += 1
                         changed = True
                         proc += 1
                         continue
+                    # 已到缓冲区的最后一个字节
+                    if last_read_size > 12:
+                        # 粘贴末尾的换行 → 自动提交（不留多余空格）
+                        save_termios()
+                        sys.stdout.write("\n")
+                        sys.stdout.flush()
+                        return submit()
+                    # 手动回车：等一小会儿确认后续无更多字节
                     timeout = 0.5 if last_read_size > 200 else 0.15
                     ready, _, _ = select.select([fd], [], [], timeout)
                     if not ready:

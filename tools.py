@@ -166,6 +166,11 @@ TOOL_DEFINITIONS = [
 
 
 def handle_save_memory(input_data: dict) -> str:
+    if "type" not in input_data:
+        return "保存失败：缺少必要参数 type（profile/journal/decision）"
+    if "data" not in input_data:
+        return "保存失败：缺少必要参数 data（要保存的具体内容）"
+
     mem_type = input_data["type"]
     data = input_data["data"]
 
@@ -186,7 +191,7 @@ def handle_save_memory(input_data: dict) -> str:
         save_decision(data)
         return "决策记录已保存。"
     else:
-        return f"未知记忆类型: {mem_type}"
+        return f"未知记忆类型: {mem_type}。支持的类型：profile、journal、decision"
 
 
 def handle_load_context(input_data: dict) -> str:
