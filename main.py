@@ -50,55 +50,59 @@ def _sanitize(text: str) -> str:
 
 # ── 思考动画 ──
 
-class Spinner:
-    """动态思考指示器，在后台线程运行。显示已耗时和步骤进度。"""
+class ThinkingUI:
+    """Agent 思考时：显示 spinner + 实时显示用户输入，支持编辑和挂起提交。"""
     CHARS = '⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
-
-    def __init__(self, text="思考中", step: int = 0, total_steps: int = None):
-        self.text = text
-        self._running = False
-        self._thread = None
-        self._start = time.time()
-        self._step = step
-        self._total = total_steps
-
-    def start(self):
-        self._running = True
-        self._thread = threading.Thread(target=self._run, daemon=True)
-        self._thread.start()
-
-    def stop(self):
-        self._running = False
-        if self._thread:
-            self._thread.join(0.3)
-
-    def _run(self):
-        i = 0
-        while self._running:
-            elapsed = int(time.time() - self._start)
-            ch = self.CHARS[i % len(self.CHARS)]
-            parts = [f"{ch} {self.text}"]
-            if self._step > 0:
-                parts.append(f"#{self._step}")
-                if self._total:
-                    parts[-1] += f"/{self._total}"
-            if elapsed >= 3:
-                parts.append(f"{elapsed}s")
-            sys.stdout.write(f"\r{C.DIM}{' '.join(parts)}…{C.RESET}")
-            sys.stdout.flush()
-            i += 1
-            time.sleep(0.08)
-
-
-class InputBuffer:
-    """在 Agent 思考时在后台线程读取用户键盘输入。"""
 
     def __init__(self, fd: int):
         self.fd = fd
-        self._buffer = []
-        self._lock = threading.Lock()
+        self._buf = []        # 字符缓冲区
+        self._cursor = 0      # 光标位置
+        self._partial = b''   # 未完成的多字节序列
         self._running = False
         self._thread = None
+        self._lock = threading.Lock()
+        self._start = time.time()
+        self._step = 0
+        self._pending = False       # 用户已按 Enter 提交
+        self._pending_text = ""     # 按 Enter 时的文字快照
+        self._render_ready = threading.Event()
+        self._render_ready.set()
+
+    @property
+    def text(self) -> str:
+        with self._lock:
+            return "".join(self._buf).strip()
+
+    @property
+    def pending(self) -> bool:
+        with self._lock:
+            return self._pending
+
+    @property
+    def pending_text(self) -> str:
+        with self._lock:
+            return self._pending_text
+
+    def set_step(self, step: int):
+        self._step = step
+
+    def clear(self):
+        with self._lock:
+            self._buf.clear()
+            self._cursor = 0
+            self._partial = b''
+            self._pending = False
+            self._pending_text = ""
+
+    def pause(self):
+        """暂停渲染（主线程要输出文字时调用）。"""
+        self._render_ready.clear()
+        time.sleep(0.06)
+
+    def resume(self):
+        """恢复渲染。"""
+        self._render_ready.set()
 
     def start(self):
         self._running = True
@@ -110,27 +114,131 @@ class InputBuffer:
         if self._thread:
             self._thread.join(0.3)
 
+    def _redraw(self):
+        """重绘 spinner 行 + 输入行。光标停在输入行。"""
+        if not self._render_ready.is_set():
+            return
+
+        # 从输入行回到第1行重新绘制
+        sys.stdout.write("\033[A")
+
+        elapsed = int(time.time() - self._start)
+        i = int(time.time() * 12) % len(self.CHARS)
+
+        with self._lock:
+            buf = list(self._buf)
+            cursor = self._cursor
+            pending = self._pending
+
+        # 第1行：spinner
+        s = f"\r{C.DIM}{self.CHARS[i]} 思考中"
+        if self._step > 0:
+            s += f" #{self._step}"
+        if elapsed >= 3:
+            s += f" {elapsed}s"
+        s += f"…{C.RESET}"
+        sys.stdout.write(f"\033[K{s}\n")
+
+        # 第2行：输入行
+        if pending:
+            text = "".join(buf) if buf else "（消息已暂存，思考完成后自动提交）"
+            sys.stdout.write(f"\033[K{C.DIM}{C.GREEN}你{C.RESET}{C.DIM} {text}{C.RESET}")
+        elif buf:
+            text = "".join(buf)
+            prompt = f"{C.GREEN}你{C.RESET}: "
+            prompt_w = _render_width(prompt)
+            input_col = sum(2 if _is_cjk(c) else 1 for c in buf[:cursor])
+            sys.stdout.write(f"\033[K{prompt}{text}")
+            sys.stdout.write(f"\033[{prompt_w + input_col + 1}G")
+        else:
+            sys.stdout.write(f"\033[K{C.GREEN}你{C.RESET}: ")
+
+        # 光标留在输入行（不返回第1行）
+        sys.stdout.flush()
+
     def _run(self):
         while self._running:
-            ready, _, _ = select.select([self.fd], [], [], 0.1)
+            ready, _, _ = select.select([self.fd], [], [], 0.05)
             if ready:
-                chunk = os.read(self.fd, 65536)
-                if chunk:
-                    with self._lock:
-                        self._buffer.append(chunk)
+                try:
+                    raw = os.read(self.fd, 65536)
+                except Exception:
+                    break
+                if raw:
+                    self._process(raw)
+            self._redraw()
 
-    def get_and_clear(self) -> str:
+    def _process(self, raw: bytes):
         with self._lock:
-            raw = b"".join(self._buffer)
-            self._buffer.clear()
-        if not raw:
-            return ""
-        text = raw.decode("utf-8", errors="replace")
-        while "\x7f" in text:
-            text = re.sub(r".\x7f", "", text, count=1)
-        text = text.replace("\x7f", "")
-        lines = [l.strip() for l in text.split("\n") if l.strip()]
-        return " ".join(lines).strip()
+            data = self._partial + raw
+            proc = 0
+
+            while proc < len(data):
+                b = data[proc]
+
+                # ── 转义序列（箭头键）──
+                if b == 27:
+                    if (proc + 2 < len(data) and data[proc + 1] == ord("[")):
+                        cmd = data[proc + 2]
+                        if cmd == ord("D"):  # ←
+                            self._cursor = max(0, self._cursor - 1)
+                        elif cmd == ord("C"):  # →
+                            self._cursor = min(len(self._buf), self._cursor + 1)
+                        elif cmd == ord("H"):
+                            self._cursor = 0
+                        elif cmd == ord("F"):
+                            self._cursor = len(self._buf)
+                        proc += 3
+                        continue
+                    proc += 1
+                    continue
+
+                # ── Enter ──
+                if b == 10:
+                    text = "".join(self._buf).strip()
+                    if text:
+                        self._pending = True
+                        self._pending_text = text
+                    proc += 1
+                    continue
+
+                # ── Backspace ──
+                if b in (127, 8):
+                    if self._cursor > 0:
+                        self._cursor -= 1
+                        del self._buf[self._cursor]
+                    proc += 1
+                    continue
+
+                if b == 3:  # Ctrl+C
+                    self._buf.clear()
+                    self._cursor = 0
+                    proc += 1
+                    continue
+
+                if b < 32:  # 其他控制
+                    proc += 1
+                    continue
+
+                # ── 可打印字符 ──
+                if b & 0x80 == 0:  # ASCII
+                    self._buf.insert(self._cursor, chr(b))
+                    self._cursor += 1
+                    proc += 1
+                else:  # 多字节 UTF-8
+                    if b & 0xE0 == 0xC0: need = 2
+                    elif b & 0xF0 == 0xE0: need = 3
+                    elif b & 0xF8 == 0xF0: need = 4
+                    else: proc += 1; continue
+                    if proc + need > len(data): break
+                    try:
+                        ch = data[proc:proc + need].decode("utf-8")
+                        self._buf.insert(self._cursor, ch)
+                        self._cursor += 1
+                        proc += need
+                    except UnicodeDecodeError: proc += 1; continue
+
+            self._partial = data[proc:]
 
 
 def _clear_line():
@@ -169,7 +277,7 @@ def _is_cjk(ch: str) -> bool:
     return (0x4E00 <= cp <= 0x9FFF) or (0x3000 <= cp <= 0x303F) or (0xFF00 <= cp <= 0xFFEF)
 
 
-def _read_input(prompt: str) -> str:
+def _read_input(prompt: str, initial: str = "") -> str:
     """非规范模式输入：支持粘贴、光标移动、中间插入、回退。"""
     fd = sys.stdin.fileno()
     old = None
@@ -186,8 +294,8 @@ def _read_input(prompt: str) -> str:
     except termios.error:
         pass
 
-    buf = []          # 字符缓冲区
-    cursor = 0        # 光标在 buf 中的位置（字符索引）
+    buf = list(initial)  # 字符缓冲区（预填思考期间输入）
+    cursor = len(buf)    # 光标在 buf 中的位置
     partial = b''
     last_read_size = 0
 
@@ -621,29 +729,31 @@ def main():
 
         print(f"{C.CYAN}─── ─── ─── ─── ─── ─── ───{C.RESET}")
 
-        # 进入思考模式：非规范 + 不回显，后台捕获键盘输入
+        # 进入思考模式：spinner + 实时输入捕获
         fd = sys.stdin.fileno()
         think_old = _term_thinking_mode(fd)
-        buf = InputBuffer(fd)
+        ui = ThinkingUI(fd)
         tool_step = 0
-        spinner = Spinner(step=tool_step)
-        buf.start()
-        spinner.start()
+        ui.clear()
+        ui.start()
 
         try:
             for msg_type, content in agent.chat(user_input):
-                spinner.stop()
-                _clear_line()
+                ui.pause()
+                # 清除 spinner + 输入两行
+                sys.stdout.write("\r\033[K\n\033[K\r\033[A")
+                sys.stdout.flush()
                 safe = _sanitize(content)
                 if msg_type == "text":
                     print(f"{C.BOLD}{C.CYAN}诸葛策:{C.RESET} {safe}")
                 elif msg_type == "tool_start":
                     tool_step += 1
+                    ui.set_step(tool_step)
                     print(f"  {C.DIM}[{safe}]{C.RESET}")
-                spinner = Spinner(step=tool_step)
-                spinner.start()
-            spinner.stop()
-            _clear_line()
+                ui.resume()
+            ui.pause()
+            sys.stdout.write("\r\033[K\n\033[K\r\033[A")
+            sys.stdout.flush()
             print(f"{C.CYAN}─── ─── ─── ─── ─── ─── ───{C.RESET}")
         except KeyboardInterrupt:
             print()
@@ -653,20 +763,24 @@ def main():
             print(f"\n  {C.DIM}错误: {e}{C.RESET}")
             return 1
         finally:
-            spinner.stop()
-            buf.stop()
+            ui.stop()
             _restore_terminal(fd, think_old)
             _clear_line()
 
         # 检查思考期间用户是否有输入
-        buffered = buf.get_and_clear()
-        if buffered:
-            if buffered.lower() in ("exit", "quit"):
+        if ui.pending:
+            # 用户按了 Enter，自动提交按 Enter 时的快照
+            text = ui.pending_text
+            if text.lower() in ("exit", "quit"):
                 print()
                 print(f"{C.BOLD}{C.CYAN}诸葛策:{C.RESET} 下次见。")
                 break
-            print(f"{C.GREEN}你{C.RESET}: {buffered}")
-            user_input = buffered
+            print(f"{C.GREEN}你{C.RESET}: {text}")
+            user_input = text
+            continue
+        elif ui.text:
+            # 用户在输入但没按 Enter，预填到输入行继续编辑
+            user_input = _read_input(f"{C.GREEN}你{C.RESET}: ", initial=ui.text)
             continue
 
         user_input = _read_input(f"{C.GREEN}你{C.RESET}: ")

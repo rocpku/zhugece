@@ -273,3 +273,22 @@ class MingYuanAgent:
     def reset_session(self):
         """重置对话历史（不清除持久化记忆）"""
         self.messages = []
+
+    def greet(self):
+        """主动问候用户（不记入历史）。欢迎页后调用。"""
+        system_msg = {"role": "system", "content": self._build_system_prompt()}
+        msg = {
+            "role": "user",
+            "content": "#system\n请主动问候用户。结合当前时间和用户档案，给出今日建议或提醒。简短有力，2-3句话。末尾要说明用户可以自由聊任何话题，不必局限于问候内容。",
+        }
+
+        response = self.client.chat.completions.create(
+            model=self.model,
+            max_tokens=1024,
+            messages=[system_msg, msg],
+            extra_body={"enable_search": True},
+        )
+
+        text = _sanitize(response.choices[0].message.content or "")
+        if text:
+            yield ("text", text)
