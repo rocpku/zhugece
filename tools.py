@@ -32,21 +32,6 @@ TOOL_DEFINITIONS = [
         },
     },
     {
-        "name": "load_context",
-        "description": "加载用户档案、近期日志和决策历史等持久化记忆，了解用户背景。每次对话开始时应该调用此工具。",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "query": {
-                    "type": "string",
-                    "enum": ["all", "profile", "journal", "decisions"],
-                    "description": "要加载的内容：all=全部加载，profile=仅档案，journal=仅日志，decisions=仅决策",
-                }
-            },
-            "required": ["query"],
-        },
-    },
-    {
         "name": "analyze_situation",
         "description": "对用户当前人生状况进行结构化多维度分析，覆盖家庭、职场、创业、健康、财务、社交、学习、精神八个维度，识别强项、弱项、机会和风险。",
         "input_schema": {
@@ -192,24 +177,6 @@ def handle_save_memory(input_data: dict) -> str:
         return "决策记录已保存。"
     else:
         return f"未知记忆类型: {mem_type}。支持的类型：profile、journal、decision"
-
-
-def handle_load_context(input_data: dict) -> str:
-    query = input_data.get("query", "all")
-    ctx = load_full_context()
-
-    parts = []
-    if query in ("all", "profile") and ctx.get("profile"):
-        parts.append(f"【用户档案】\n{json.dumps(ctx['profile'], ensure_ascii=False, indent=2)}")
-    if query in ("all", "journal") and ctx.get("recent_journal"):
-        parts.append(f"【近期日志（最近 {len(ctx['recent_journal'])} 条）】\n{json.dumps(ctx['recent_journal'], ensure_ascii=False, indent=2)}")
-    if query in ("all", "decisions") and ctx.get("recent_decisions"):
-        parts.append(f"【历史决策（最近 {len(ctx['recent_decisions'])} 条）】\n{json.dumps(ctx['recent_decisions'], ensure_ascii=False, indent=2)}")
-
-    if not parts:
-        return "暂无保存的用户记忆。这是一个新用户，请引导他建立个人档案。"
-
-    return "\n\n".join(parts)
 
 
 def handle_analyze_situation(input_data: dict) -> str:
@@ -606,7 +573,6 @@ def handle_render_page(input_data: dict) -> str:
 
 TOOL_HANDLERS = {
     "save_memory": handle_save_memory,
-    "load_context": handle_load_context,
     "analyze_situation": handle_analyze_situation,
     "analyze_decision": handle_analyze_decision,
     "calculate_bazi": handle_calculate_bazi,

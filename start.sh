@@ -3,4 +3,10 @@
 stty sane 2>/dev/null
 cd "$(dirname "$0")"
 source .venv/bin/activate
-exec python main.py "$@"
+
+# web 模式：bash start.sh web
+if [ "$1" = "web" ]; then
+    exec python main_web.py
+else
+    exec python main.py "$@"
+fi
