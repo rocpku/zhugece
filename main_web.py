@@ -275,6 +275,23 @@ async def create_conversation(request: Request):
     return {"id": conv_id, "title": "新对话"}
 
 
+@app.delete("/api/conversations/{conv_id}")
+async def delete_conversation(conv_id: int, request: Request):
+    user = require_user(request)
+    db = get_db()
+    conv = db.execute("SELECT id FROM conversations WHERE id=? AND user_id=?", (conv_id, user["id"])).fetchone()
+    if not conv:
+        db.close()
+        raise HTTPException(404, "对话不存在")
+    db.execute("DELETE FROM messages WHERE conversation_id=?", (conv_id,))
+    db.execute("DELETE FROM conversations WHERE id=?", (conv_id,))
+    db.commit()
+    db.close()
+    # 清除内存中的 agent
+    _agents.pop(_agent_key(user["id"], conv_id), None)
+    return {"ok": True}
+
+
 @app.get("/api/conversations/{conv_id}/history")
 async def conversation_history(conv_id: int, request: Request):
     user = require_user(request)
@@ -582,18 +599,20 @@ body {
   padding: 0 8px 8px;
 }
 .sidebar .conv-item {
+  display: flex; align-items: center;
   padding: 8px 10px;
   border-radius: 6px;
   font-size: 13px;
   color: var(--ink-light);
   cursor: pointer;
   transition: background 0.1s;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 .sidebar .conv-item:hover { background: var(--bg); }
 .sidebar .conv-item.active { background: var(--accent-light); color: var(--ink); font-weight: 500; }
+.sidebar .conv-item .ct { flex:1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.sidebar .conv-item .cd { display:none; background:none; border:none; font-size:14px; color:var(--ink-lighter); cursor:pointer; padding:0 2px 0 6px; line-height:1; font-family:inherit; opacity:0.5; }
+.sidebar .conv-item:hover .cd { display:block; }
+.sidebar .conv-item .cd:hover { opacity:1; color:#c33; }
 
 /* Main chat */
 .chat-main {
@@ -846,10 +865,23 @@ async function loadConvs() {
 
 function renderConvList() {
   $('convList').innerHTML = convs.map(c =>
-    '<div class="conv-item' + (c.id === currentConvId ? ' active' : '') + '" data-id="' + c.id + '">' + escapeHtml(c.title) + '</div>'
+    '<div class="conv-item' + (c.id === currentConvId ? ' active' : '') + '" data-id="' + c.id + '">' +
+      '<span class="ct">' + escapeHtml(c.title) + '</span>' +
+      '<button class="cd" data-id="' + c.id + '" title="删除对话">×</button>' +
+    '</div>'
   ).join('');
   $('convList').querySelectorAll('.conv-item').forEach(el => {
-    el.onclick = () => selectConv(parseInt(el.dataset.id));
+    el.onclick = (e) => { if (!e.target.classList.contains('cd')) selectConv(parseInt(el.dataset.id)); };
+  });
+  $('convList').querySelectorAll('.cd').forEach(btn => {
+    btn.onclick = async (e) => { e.stopPropagation();
+      const id = parseInt(btn.dataset.id);
+      if (!confirm('确定删除此对话？')) return;
+      await fetch('/api/conversations/' + id, {method:'DELETE'});
+      convs = convs.filter(c => c.id !== id);
+      if (currentConvId === id) { currentConvId = 0; msgEl.innerHTML = ''; }
+      renderConvList();
+    };
   });
 }
 
