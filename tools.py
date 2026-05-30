@@ -122,7 +122,7 @@ TOOL_DEFINITIONS = [
     },
     {
         "name": "render_page",
-        "description": "将内容渲染为 HTML 页面并在浏览器打开。两种模式：(1) 传 content（markdown）自动套用精美模板（适合快节奏报告）；(2) 传 html_content（完整 HTML）原样渲染（适合惊艳展示——此时你应当遵循 frontend-design 理念，设计有独特审美的页面）。仅在内容有展示价值时使用。",
+        "description": "**必用工具**：将内容渲染为 HTML 页面，会在用户浏览器新标签页自动打开，聊天框也保留链接。严禁在聊天中输出 HTML 源码替代此工具。有展示价值的内容（总结报告、多维分析、路线图、名片页等）必须用此工具。两种模式：(1) 传 content（markdown）自动套用精美模板；(2) 传 html_content（完整 HTML）原样渲染——此时应自行设计有独特审美的页面。",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -556,11 +556,6 @@ def handle_render_page(input_data: dict) -> str:
     with open(filepath, "w", encoding="utf-8") as f:
         f.write(html)
 
-    try:
-        subprocess.run(["open", str(filepath)], check=False)
-    except Exception:
-        pass
-
     save_journal({
         "type": "render_page",
         "title": title,
@@ -568,6 +563,16 @@ def handle_render_page(input_data: dict) -> str:
         "date": date.today().isoformat(),
     })
 
+    # Web 模式（由 main_web.py 设置环境变量）
+    if os.getenv("ZHUGE_WEB_URL") == "1":
+        rel_path = f"renders/{filename}"
+        return f"📄 报告已生成：[{title}](/{rel_path})"
+
+    # CLI 模式
+    try:
+        subprocess.run(["open", str(filepath)], check=False)
+    except Exception:
+        pass
     return f"页面已打开: {filepath}"
 
 

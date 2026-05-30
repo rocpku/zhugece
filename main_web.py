@@ -20,6 +20,7 @@ sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="repla
 
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import HTMLResponse, StreamingResponse, Response
+from fastapi.staticfiles import StaticFiles
 import uvicorn
 
 from agent import MingYuanAgent
@@ -131,10 +132,12 @@ def _update_conv_time(conv_id: int):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
+    os.environ["ZHUGE_WEB_URL"] = "1"
     yield
     _agents.clear()
 
 app = FastAPI(title="诸葛策", lifespan=lifespan)
+app.mount("/renders", StaticFiles(directory=str(Path(__file__).parent / "renders")), name="renders")
 
 
 # ── 认证辅助 ──
@@ -679,10 +682,6 @@ body {
 .msg.agent th, .msg.agent td { padding:6px 10px; text-align:left; border-bottom:1px solid var(--border-light); }
 .msg.agent th { background:var(--bg); font-weight:500; }
 .msg.agent hr { border:none; border-top:1px solid var(--border-light); margin:1em 0; }
-.msg.agent .tool-call { display:inline-flex; align-items:center; gap:6px; font-size:12px; color:var(--ink-lighter); background:var(--bg); padding:3px 10px; border-radius:6px; margin:4px 0; }
-.msg.agent .tool-call::before { content:''; width:12px; height:12px; border:1.5px solid var(--accent-light); border-top-color:var(--accent); border-radius:50%; animation:spin 0.8s linear infinite; }
-@keyframes spin { to { transform:rotate(360deg); } }
-
 .thinking-dots { display:inline-flex; align-items:center; gap:3px; padding:4px 0; }
 .thinking-dots span { width:5px; height:5px; background:var(--ink-lighter); border-radius:50%; animation:dotPulse 1.2s ease-in-out infinite; }
 .thinking-dots span:nth-child(2) { animation-delay:0.2s; }
@@ -697,7 +696,7 @@ body {
   flex-shrink:0;
   background:var(--surface);
   border-top:1px solid var(--border);
-  padding:10px 16px 14px;
+  padding:12px 16px 16px;
 }
 .input-area .input-wrap {
   display:flex;
@@ -706,19 +705,20 @@ body {
   background:var(--bg);
   border:1px solid var(--border);
   border-radius:12px;
-  padding:6px 8px 6px 16px;
+  padding:6px 6px 6px 16px;
   transition:border-color 0.15s, box-shadow 0.15s;
 }
 .input-area .input-wrap:focus-within { border-color:var(--accent); box-shadow:0 0 0 2px rgba(184,146,90,0.1); background:#fff; }
 .input-area textarea {
   flex:1;
   border:none;
-  padding:6px 0;
+  padding:8px 0;
   font-size:14px;
   font-family:var(--font-body);
   resize:none;
   outline:none;
-  max-height:112px;
+  min-height:64px;
+  max-height:280px;
   line-height:1.6;
   background:transparent;
   color:var(--ink);
@@ -749,6 +749,10 @@ body {
   .sidebar { display:none; }
   .sidebar.open { display:flex; position:fixed; left:0; top:0; bottom:0; z-index:10; width:260px; box-shadow:4px 0 20px rgba(0,0,0,0.1); }
 }
+/* Sidebar toggle on desktop */
+.sidebar.collapsed { display:none; }
+.chat-layout.sidebar-collapsed .chat-main { max-width:100%; }
+@keyframes toolPulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:0.6;transform:scale(0.85)} }
 </style>
 </head>
 <body>
@@ -779,7 +783,7 @@ body {
       <button class="logout-btn" id="logoutBtn">退出</button>
     </div>
   </div>
-  <div class="chat-layout">
+  <div class="chat-layout" id="chatLayout">
     <div class="sidebar" id="sidebar">
       <button class="new-btn" id="newConvBtn">+ 新对话</button>
       <div class="conv-list" id="convList"></div>
@@ -933,7 +937,7 @@ function escapeHtml(t) {
 
 inputEl.oninput = () => {
   inputEl.style.height = 'auto';
-  inputEl.style.height = Math.min(inputEl.scrollHeight, 112) + 'px';
+  inputEl.style.height = Math.min(inputEl.scrollHeight, 280) + 'px';
 };
 inputEl.onkeydown = e => {
   if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
@@ -963,7 +967,30 @@ async function send() {
 
   const dots = '<div class="thinking-dots"><span></span><span></span><span></span></div>';
   const msgDiv = addMessage('agent', dots);
+  let toolStatus = null;
   let content = '';
+
+  function showToolStatus(text) {
+    if (!toolStatus) {
+      toolStatus = document.createElement('div');
+      toolStatus.style.cssText = 'font-size:12px;color:var(--ink-lighter);padding:4px 0;align-self:flex-start;animation:msgIn 0.2s ease;display:flex;align-items:center;gap:6px;';
+      const bar = document.createElement('span');
+      bar.className = 'tool-status-bar';
+      bar.style.cssText = 'display:inline-block;width:12px;height:12px;border-radius:50%;background:var(--accent);animation:toolPulse 1.2s ease-in-out infinite;flex-shrink:0;';
+      toolStatus.appendChild(bar);
+      const span = document.createElement('span');
+      span.className = 'tool-status-text';
+      toolStatus.appendChild(span);
+      msgEl.insertBefore(toolStatus, msgEl.lastElementChild.nextSibling || null);
+    }
+    const isRender = text.includes('render_page');
+    toolStatus.querySelector('.tool-status-text').textContent = isRender ? '生成页面中...' : text;
+    toolStatus.querySelector('.tool-status-bar').style.background = isRender ? 'var(--highlight,#c5862b)' : 'var(--accent)';
+    requestAnimationFrame(() => msgEl.scrollTop = msgEl.scrollHeight);
+  }
+  function hideToolStatus() {
+    if (toolStatus) { toolStatus.remove(); toolStatus = null; }
+  }
 
   try {
     const resp = await fetch('/api/chat', {
@@ -983,8 +1010,23 @@ async function send() {
         if (data === '[DONE]') break;
         try {
           const p = JSON.parse(data);
-          if (p.type === 'text') { content += p.content; msgDiv.innerHTML = marked.parse(content); }
-          else if (p.type === 'tool_start') { content += '\n\n<div class="tool-call">' + escapeHtml(p.content) + '</div>\n'; msgDiv.innerHTML = marked.parse(content); }
+          if (p.type === 'text') {
+            hideToolStatus();
+            content += p.content;
+            msgDiv.innerHTML = marked.parse(content).replace(/<a\s+href=/g, '<a target="_blank" href=');
+          } else if (p.type === 'tool_start') {
+            showToolStatus('⏳ ' + escapeHtml(p.content));
+          } else if (p.type === 'render_done') {
+            hideToolStatus();
+            // 显示页面已生成通知 & 自动打开
+            const pageUrl = p.content;
+            const notif = document.createElement('div');
+            notif.style.cssText = 'background:var(--accent-bg,#f5f0e8);border:1px solid var(--accent);border-radius:8px;padding:10px 14px;margin:6px 0;align-self:flex-start;animation:msgIn 0.3s ease;font-size:13px;';
+            notif.innerHTML = '📄 页面已生成：<a href="'+pageUrl+'" target="_blank" style="color:var(--accent);font-weight:600;text-decoration:underline;">点击打开</a>（已自动在新标签页打开）';
+            msgEl.appendChild(notif);
+            requestAnimationFrame(() => msgEl.scrollTop = msgEl.scrollHeight);
+            window.open(pageUrl, '_blank');
+          }
         } catch(e) {}
       }
       requestAnimationFrame(() => msgEl.scrollTop = msgEl.scrollHeight);
@@ -1017,8 +1059,15 @@ $('logoutBtn').onclick = async () => {
   location.reload();
 };
 
-// ── Sidebar toggle (mobile) ──
-$('menuBtn').onclick = () => $('sidebar').classList.toggle('open');
+// ── Sidebar toggle ──
+$('menuBtn').onclick = () => {
+  if (window.innerWidth <= 700) {
+    $('sidebar').classList.toggle('open');
+  } else {
+    $('sidebar').classList.toggle('collapsed');
+    $('chatLayout').classList.toggle('sidebar-collapsed');
+  }
+};
 
 checkAuth();
 </script>
@@ -1026,9 +1075,9 @@ checkAuth();
 </html>"""
 
 
-@app.get("/", response_class=HTMLResponse)
+@app.get("/")
 async def index():
-    return HTML
+    return HTMLResponse(HTML, headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
 
 
 # ── 启动 ──
