@@ -381,6 +381,7 @@ def _md_to_html(text: str) -> str:
 
 
 _THEMES = {
+    # ─── 主题: serene ─── 东方美学 · 水墨宣纸 · 如一幅手卷 ───
     "serene": r"""<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -388,47 +389,216 @@ _THEMES = {
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>{title} — 诸葛策</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;600;700&family=Noto+Sans+SC:wght@300;400;500&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@300;400;600;700;900&family=ZCOOL+XiaoWei&family=Ma+Shan+Zheng&display=swap" rel="stylesheet">
 <style>
 * {{ margin:0; padding:0; box-sizing:border-box; }}
 body {{
-  font-family: "Noto Serif SC", "Noto Sans SC", serif;
-  background: #f7f5f1;
-  color: #2c2c2c;
-  line-height: 1.9;
-  padding: 3rem 1rem;
-  background-image: radial-gradient(circle at 20% 50%, rgba(196,168,130,0.04) 0%, transparent 50%);
+  font-family: "Noto Serif SC", "ZCOOL XiaoWei", serif;
+  background: #f2ede4;
+  min-height: 100vh;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 2rem 1rem;
+  position: relative;
+  background-image:
+    /* 宣纸纹理 */
+    repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(180,160,130,0.03) 2px, rgba(180,160,130,0.03) 4px),
+    radial-gradient(ellipse at 30% 20%, rgba(200,175,140,0.08) 0%, transparent 50%),
+    radial-gradient(ellipse at 70% 80%, rgba(160,140,110,0.06) 0%, transparent 50%);
 }}
-.container {{ max-width:720px; margin:0 auto; background:rgba(255,255,255,0.85); backdrop-filter:blur(8px); border-radius:16px; padding:3rem 2.5rem; box-shadow:0 4px 40px rgba(0,0,0,0.04); border:1px solid rgba(0,0,0,0.04); }}
-h1 {{ font-size:1.5rem; font-weight:700; letter-spacing:0.08em; margin-bottom:0.3rem; color:#1a1a1a; }}
-h2 {{ font-size:1.15rem; font-weight:600; margin:2rem 0 0.8rem; color:#333; letter-spacing:0.04em; padding-bottom:0.3rem; border-bottom:1px solid #ede8e0; }}
-h3 {{ font-size:1rem; font-weight:600; margin:1.4rem 0 0.5rem; color:#555; }}
-p {{ margin:0.6rem 0; color:#555; line-height:1.9; }}
-strong {{ color:#1a1a1a; font-weight:600; }}
-em {{ color:#a88b6a; font-style:normal; }}
-ul, ol {{ margin:0.5rem 0 0.5rem 1.2rem; }}
-li {{ margin:0.3rem 0; color:#555; }}
-blockquote {{ margin:1.2rem 0; padding:0.8rem 1.2rem; border-left:3px solid #c4a882; background:rgba(196,168,130,0.06); border-radius:0 8px 8px 0; color:#666; }}
-code {{ background:#ede8e0; padding:0.15rem 0.4rem; border-radius:4px; font-size:0.9em; color:#8a7a6a; font-family:"SF Mono","Fira Code",monospace; }}
-pre {{ background:#f5f3ef; padding:1.2rem; border-radius:10px; overflow-x:auto; font-size:0.85rem; margin:1rem 0; border:1px solid #ede8e0; }}
-table {{ width:100%; border-collapse:collapse; margin:1.2rem 0; font-size:0.9rem; }}
-th, td {{ padding:0.6rem 0.8rem; text-align:left; border-bottom:1px solid #ede8e0; }}
-th {{ background:#faf8f5; font-weight:600; color:#333; }}
-tr:last-child td {{ border-bottom:none; }}
-hr {{ border:none; border-top:1px solid #e8e0d6; margin:1.8rem 0; }}
-.meta {{ font-size:0.75rem; color:#aaa; margin-top:2.5rem; text-align:center; letter-spacing:0.05em; }}
-@media (max-width:600px) {{ .container {{ padding:2rem 1.2rem; }} }}
+/* 仿古画轴装饰角 */
+body::before {{
+  content: '';
+  position: fixed;
+  top: 1rem; left: 1rem;
+  width: 3rem; height: 3rem;
+  border-top: 2px solid rgba(160,140,110,0.25);
+  border-left: 2px solid rgba(160,140,110,0.25);
+}}
+body::after {{
+  content: '';
+  position: fixed;
+  bottom: 1rem; right: 1rem;
+  width: 3rem; height: 3rem;
+  border-bottom: 2px solid rgba(160,140,110,0.25);
+  border-right: 2px solid rgba(160,140,110,0.25);
+}}
+
+.container {{
+  max-width: 760px;
+  width: 100%;
+  margin: 0 auto;
+  background: linear-gradient(180deg, #fcf9f4 0%, #f8f4ec 100%);
+  border-radius: 4px;
+  padding: 3.5rem 3rem;
+  box-shadow:
+    0 2px 60px rgba(120,100,70,0.08),
+    0 1px 4px rgba(120,100,70,0.04);
+  position: relative;
+  border: 1px solid rgba(180,160,130,0.15);
+  animation: fadeSlideIn 0.6s ease-out;
+}}
+@keyframes fadeSlideIn {{
+  0% {{ opacity:0; transform:translateY(12px); }}
+  100% {{ opacity:1; transform:translateY(0); }}
+}}
+
+/* 标题区 — 像一幅画的题跋 */
+.container::before {{
+  content: '';
+  display: block;
+  width: 3.5rem;
+  height: 2px;
+  background: #b89870;
+  margin-bottom: 1.8rem;
+  opacity: 0.5;
+}}
+.container::after {{
+  content: '';
+  display: block;
+  width: 100%;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(180,160,130,0.2), transparent);
+  margin: 2rem 0 1rem;
+}}
+
+h1 {{
+  font-family: "Noto Serif SC", serif;
+  font-size: 1.65rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  color: #2c2418;
+  margin-bottom: 0.4rem;
+  line-height: 1.4;
+}}
+h2 {{
+  font-family: "Noto Serif SC", serif;
+  font-size: 1.2rem;
+  font-weight: 600;
+  margin: 2.2rem 0 0.8rem;
+  color: #3d3224;
+  letter-spacing: 0.06em;
+  padding-left: 0.6rem;
+  border-left: 3px solid #c4a882;
+}}
+h3 {{
+  font-size: 1rem;
+  font-weight: 600;
+  margin: 1.5rem 0 0.5rem;
+  color: #5a4c38;
+  letter-spacing: 0.04em;
+}}
+p {{
+  margin: 0.7rem 0;
+  color: #5a4c38;
+  line-height: 2;
+  font-weight: 350;
+  font-size: 0.95rem;
+}}
+strong {{
+  color: #2c2418;
+  font-weight: 700;
+}}
+em {{
+  color: #a08060;
+  font-style: italic;
+}}
+ul, ol {{
+  margin: 0.5rem 0 0.5rem 1.2rem;
+}}
+li {{
+  margin: 0.35rem 0;
+  color: #5a4c38;
+  line-height: 1.8;
+  font-size: 0.95rem;
+}}
+blockquote {{
+  margin: 1.5rem 0;
+  padding: 0.8rem 1.5rem;
+  border-left: 3px solid #c4a882;
+  background: linear-gradient(90deg, rgba(196,168,130,0.06), transparent);
+  border-radius: 0 6px 6px 0;
+  color: #6b5c48;
+  font-style: italic;
+  font-size: 0.95rem;
+  position: relative;
+}}
+blockquote::before {{
+  content: '\201C';
+  font-family: "Ma Shan Zheng", serif;
+  font-size: 2.5rem;
+  color: #c4a882;
+  position: absolute;
+  top: -0.2rem;
+  left: 0.5rem;
+  opacity: 0.3;
+}}
+code {{
+  background: rgba(196,168,130,0.12);
+  padding: 0.15rem 0.5rem;
+  border-radius: 3px;
+  font-size: 0.85em;
+  color: #7a6a55;
+  font-family: "SF Mono", "Fira Code", monospace;
+}}
+pre {{
+  background: #f5f0e8;
+  padding: 1.2rem 1.5rem;
+  border-radius: 4px;
+  overflow-x: auto;
+  font-size: 0.82rem;
+  margin: 1.2rem 0;
+  border: 1px solid rgba(180,160,130,0.12);
+  color: #5a4c38;
+}}
+table {{
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1.5rem 0;
+  font-size: 0.9rem;
+  border-radius: 4px;
+  overflow: hidden;
+}}
+th, td {{
+  padding: 0.65rem 0.8rem;
+  text-align: left;
+  border-bottom: 1px solid rgba(180,160,130,0.15);
+}}
+th {{
+  background: rgba(196,168,130,0.08);
+  font-weight: 600;
+  color: #3d3224;
+  letter-spacing: 0.04em;
+}}
+tr:last-child td {{ border-bottom: none; }}
+tr:hover td {{ background: rgba(196,168,130,0.04); }}
+hr {{
+  border: none;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(180,160,130,0.25), transparent);
+  margin: 2rem 0;
+}}
+.meta {{
+  text-align: center;
+  font-size: 0.7rem;
+  color: #b8a88a;
+  letter-spacing: 0.15em;
+  margin-top: 1.5rem;
+  font-family: "Noto Serif SC", serif;
+}}
+@media (max-width:600px) {{ .container {{ padding:2rem 1.2rem; }} body {{ padding:1rem; }} }}
 </style>
 </head>
 <body>
 <div class="container">
-<div style="width:2rem;height:2px;background:#c4a882;margin-bottom:2rem;"></div>
 {body}
-<div class="meta">诸葛策 · {date}</div>
+<div class="meta">诸 葛 策  ·  {date}</div>
 </div>
 </body>
 </html>""",
 
+    # ─── 主题: bold ─── 暗黑奢华 · 杂志级视觉冲击 ───
     "bold": r"""<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -436,47 +606,197 @@ hr {{ border:none; border-top:1px solid #e8e0d6; margin:1.8rem 0; }}
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>{title} — 诸葛策</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;500;700;900&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=Inter:wght@300;400;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
 <style>
 * {{ margin:0; padding:0; box-sizing:border-box; }}
 body {{
   font-family: "Inter", -apple-system, sans-serif;
-  background: #0f0f0f;
-  color: #e8e8e8;
-  line-height: 1.7;
+  background: #0a0a0a;
+  min-height: 100vh;
+  display: flex;
+  justify-content: center;
+  align-items: center;
   padding: 2rem 1rem;
-  background-image: radial-gradient(ellipse at 80% 20%, rgba(233,69,96,0.06) 0%, transparent 50%), radial-gradient(ellipse at 20% 80%, rgba(78,84,200,0.06) 0%, transparent 50%);
+  position: relative;
+  background-image:
+    radial-gradient(ellipse at 15% 20%, rgba(212,175,55,0.04) 0%, transparent 45%),
+    radial-gradient(ellipse at 85% 75%, rgba(180,60,60,0.04) 0%, transparent 45%),
+    repeating-linear-gradient(0deg, transparent, transparent 30px, rgba(255,255,255,0.008) 30px, rgba(255,255,255,0.008) 31px);
 }}
-.container {{ max-width:780px; margin:0 auto; background:#1a1a1a; border-radius:12px; padding:3rem 2.5rem; border:1px solid #2a2a2a; box-shadow:0 8px 60px rgba(0,0,0,0.3); }}
-h1 {{ font-size:1.6rem; font-weight:900; letter-spacing:-0.02em; color:#fff; margin-bottom:0.3rem; }}
-h2 {{ font-size:1.2rem; font-weight:700; margin:2rem 0 0.8rem; color:#fff; letter-spacing:-0.01em; }}
-h3 {{ font-size:1rem; font-weight:600; margin:1.4rem 0 0.5rem; color:#ccc; }}
-p {{ margin:0.6rem 0; color:#a8a8a8; }}
-strong {{ color:#fff; font-weight:600; }}
-em {{ color:#e94560; font-style:normal; }}
-ul, ol {{ margin:0.5rem 0 0.5rem 1.2rem; }}
-li {{ margin:0.3rem 0; color:#a8a8a8; }}
-blockquote {{ margin:1.2rem 0; padding:0.8rem 1.2rem; border-left:3px solid #e94560; background:rgba(233,69,96,0.06); border-radius:0 8px 8px 0; color:#999; }}
-code {{ background:#2a2a2a; padding:0.15rem 0.4rem; border-radius:4px; font-size:0.9em; color:#e94560; font-family:"JetBrains Mono","SF Mono",monospace; }}
-pre {{ background:#222; padding:1.2rem; border-radius:10px; overflow-x:auto; font-size:0.85rem; margin:1rem 0; border:1px solid #2a2a2a; }}
-table {{ width:100%; border-collapse:collapse; margin:1.2rem 0; font-size:0.9rem; }}
-th, td {{ padding:0.6rem 0.8rem; text-align:left; border-bottom:1px solid #2a2a2a; }}
-th {{ background:#222; font-weight:600; color:#fff; }}
-tr:last-child td {{ border-bottom:none; }}
-hr {{ border:none; border-top:1px solid #2a2a2a; margin:1.8rem 0; }}
-.meta {{ font-size:0.75rem; color:#555; margin-top:2.5rem; text-align:center; }}
-@media (max-width:600px) {{ .container {{ padding:2rem 1.2rem; }} }}
+
+/* 细金边框装饰 */
+body::before {{
+  content: '';
+  position: fixed;
+  top: 0.8rem; left: 0.8rem; right: 0.8rem; bottom: 0.8rem;
+  border: 1px solid rgba(212,175,55,0.08);
+  pointer-events: none;
+}}
+
+.container {{
+  max-width: 780px;
+  width: 100%;
+  margin: 0 auto;
+  background: linear-gradient(170deg, #131313 0%, #1a1a1a 50%, #111 100%);
+  border-radius: 2px;
+  padding: 3.5rem 3rem;
+  box-shadow:
+    0 20px 80px rgba(0,0,0,0.5),
+    inset 0 1px 0 rgba(255,255,255,0.03);
+  position: relative;
+  animation: fadeIn 0.5s ease-out;
+}}
+@keyframes fadeIn {{
+  0% {{ opacity:0; transform:scale(0.98); }}
+  100% {{ opacity:1; transform:scale(1); }}
+}}
+
+/* 顶部金属装饰线 */
+.container::before {{
+  content: '';
+  display: block;
+  width: 5rem;
+  height: 3px;
+  background: linear-gradient(90deg, #d4af37, #f5e6a3, #d4af37);
+  margin-bottom: 2rem;
+  border-radius: 2px;
+  box-shadow: 0 0 12px rgba(212,175,55,0.2);
+}}
+
+h1 {{
+  font-family: "Playfair Display", "Noto Serif SC", serif;
+  font-size: 1.75rem;
+  font-weight: 900;
+  color: #f5e6d0;
+  margin-bottom: 0.4rem;
+  letter-spacing: -0.01em;
+  line-height: 1.3;
+}}
+h2 {{
+  font-family: "Playfair Display", "Noto Serif SC", serif;
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: #d4af37;
+  margin: 2.2rem 0 0.8rem;
+  letter-spacing: 0.02em;
+  border-bottom: 1px solid rgba(212,175,55,0.15);
+  padding-bottom: 0.4rem;
+}}
+h3 {{
+  font-size: 1rem;
+  font-weight: 600;
+  margin: 1.5rem 0 0.5rem;
+  color: #c8c0b0;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  font-size: 0.85rem;
+}}
+p {{
+  margin: 0.7rem 0;
+  color: #a8a090;
+  line-height: 1.85;
+  font-size: 0.95rem;
+  font-weight: 350;
+}}
+strong {{
+  color: #f5e6d0;
+  font-weight: 700;
+}}
+em {{
+  color: #d4af37;
+  font-style: italic;
+}}
+ul, ol {{
+  margin: 0.5rem 0 0.5rem 1.2rem;
+}}
+li {{
+  margin: 0.35rem 0;
+  color: #a8a090;
+  line-height: 1.8;
+  font-size: 0.95rem;
+}}
+blockquote {{
+  margin: 1.5rem 0;
+  padding: 1rem 1.5rem;
+  border-left: 2px solid #d4af37;
+  background: linear-gradient(90deg, rgba(212,175,55,0.04), transparent);
+  color: #c8c0b0;
+  font-style: italic;
+  font-size: 0.95rem;
+  position: relative;
+}}
+blockquote::before {{
+  content: '\\275D';
+  font-size: 1.5rem;
+  color: rgba(212,175,55,0.2);
+  position: absolute;
+  top: 0.2rem;
+  left: 0.5rem;
+}}
+code {{
+  background: #1e1e1e;
+  padding: 0.15rem 0.5rem;
+  border-radius: 3px;
+  font-size: 0.85em;
+  color: #e8c070;
+  font-family: "JetBrains Mono", "SF Mono", monospace;
+  border: 1px solid rgba(212,175,55,0.1);
+}}
+pre {{
+  background: #0e0e0e;
+  padding: 1.2rem 1.5rem;
+  border-radius: 2px;
+  overflow-x: auto;
+  font-size: 0.82rem;
+  margin: 1.2rem 0;
+  border: 1px solid rgba(255,255,255,0.04);
+  color: #a8a090;
+}}
+table {{
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1.5rem 0;
+  font-size: 0.9rem;
+}}
+th, td {{
+  padding: 0.65rem 0.8rem;
+  text-align: left;
+  border-bottom: 1px solid rgba(255,255,255,0.04);
+}}
+th {{
+  background: rgba(212,175,55,0.04);
+  font-weight: 600;
+  color: #d4af37;
+  letter-spacing: 0.04em;
+}}
+tr:last-child td {{ border-bottom: none; }}
+tr:hover td {{ background: rgba(255,255,255,0.02); }}
+hr {{
+  border: none;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(212,175,55,0.15), transparent);
+  margin: 2rem 0;
+}}
+.meta {{
+  text-align: center;
+  font-size: 0.65rem;
+  color: #555;
+  letter-spacing: 0.2em;
+  margin-top: 2rem;
+  text-transform: uppercase;
+}}
+@media (max-width:600px) {{ .container {{ padding:2rem 1.2rem; }} body {{ padding:1rem; }} }}
 </style>
 </head>
 <body>
 <div class="container">
-<div style="width:3rem;height:3px;background:linear-gradient(90deg,#e94560,#4e54c8);margin-bottom:2rem;border-radius:2px;"></div>
 {body}
-<div class="meta">诸葛策 · {date}</div>
+<div class="meta">ZHUGE CE  ·  {date}</div>
 </div>
 </body>
 </html>""",
 
+    # ─── 主题: minimal ─── 瑞士国际主义 · 极简却精密 ───
     "minimal": r"""<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -484,41 +804,171 @@ hr {{ border:none; border-top:1px solid #2a2a2a; margin:1.8rem 0; }}
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>{title} — 诸葛策</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@200;300;400;500&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@200;300;400;500;700&display=swap" rel="stylesheet">
 <style>
 * {{ margin:0; padding:0; box-sizing:border-box; }}
 body {{
-  font-family: "Noto Sans SC", -apple-system, sans-serif;
-  background: #fff;
-  color: #1a1a1a;
-  line-height: 1.8;
-  padding: 4rem 1rem;
+  font-family: "Noto Sans SC", "Helvetica Neue", sans-serif;
+  background: #ffffff;
+  min-height: 100vh;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding: 5rem 1rem 3rem;
+  position: relative;
 }}
-.container {{ max-width:680px; margin:0 auto; padding:0; }}
-h1 {{ font-size:1.3rem; font-weight:200; letter-spacing:0.15em; color:#1a1a1a; margin-bottom:0.5rem; }}
-h2 {{ font-size:1rem; font-weight:400; letter-spacing:0.1em; margin:2.5rem 0 0.8rem; color:#333; }}
-h3 {{ font-size:0.9rem; font-weight:500; margin:1.5rem 0 0.5rem; color:#555; text-transform:uppercase; letter-spacing:0.08em; }}
-p {{ margin:0.5rem 0; color:#666; font-weight:300; }}
-strong {{ color:#1a1a1a; font-weight:400; }}
-em {{ color:#999; font-style:normal; }}
-ul, ol {{ margin:0.4rem 0 0.4rem 1rem; }}
-li {{ margin:0.25rem 0; color:#666; font-weight:300; }}
-blockquote {{ margin:1rem 0; padding:0.5rem 0 0.5rem 1.5rem; border-left:1px solid #ddd; color:#999; font-weight:300; }}
-code {{ background:#f5f5f5; padding:0.1rem 0.3rem; border-radius:2px; font-size:0.85em; color:#666; font-family:"SF Mono",monospace; }}
-pre {{ background:#fafafa; padding:1rem; border-radius:4px; overflow-x:auto; font-size:0.8rem; margin:1rem 0; }}
-table {{ width:100%; border-collapse:collapse; margin:1rem 0; font-size:0.85rem; }}
-th, td {{ padding:0.4rem 0.6rem; text-align:left; border-bottom:1px solid #eee; }}
-th {{ font-weight:400; color:#333; }}
-tr:last-child td {{ border-bottom:none; }}
-hr {{ border:none; border-top:1px solid #eee; margin:2rem 0; }}
-.meta {{ font-size:0.7rem; color:#ccc; margin-top:3rem; text-align:center; letter-spacing:0.1em; }}
-@media (max-width:600px) {{ body {{ padding:2rem 1rem; }} }}
+/* 顶部色块 — 瑞士风格的精确色标 */
+body::before {{
+  content: '';
+  position: fixed;
+  top: 0; left: 0; right: 0;
+  height: 4px;
+  background: linear-gradient(90deg, #1a1a1a 0%, #1a1a1a 20%, #e63946 20%, #e63946 40%, #f4a261 40%, #f4a261 60%, #2a9d8f 60%, #2a9d8f 80%, #1a1a1a 80%, #1a1a1a 100%);
+}}
+body::after {{
+  content: '';
+  position: fixed;
+  bottom: 0; left: 0; right: 0;
+  height: 2px;
+  background: #1a1a1a;
+}}
+
+.container {{
+  max-width: 660px;
+  width: 100%;
+  margin: 0 auto;
+  padding: 0;
+  position: relative;
+  animation: driftUp 0.5s ease-out;
+}}
+@keyframes driftUp {{
+  0% {{ opacity:0; transform:translateY(8px); }}
+  100% {{ opacity:1; transform:translateY(0); }}
+}}
+
+h1 {{
+  font-size: 1.5rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: #1a1a1a;
+  margin-bottom: 0.3rem;
+  line-height: 1.2;
+}}
+h1::after {{
+  content: '';
+  display: block;
+  width: 2rem;
+  height: 3px;
+  background: #e63946;
+  margin-top: 0.6rem;
+  margin-bottom: 1.5rem;
+}}
+h2 {{
+  font-size: 1rem;
+  font-weight: 500;
+  margin: 2.5rem 0 0.6rem;
+  color: #1a1a1a;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  font-size: 0.8rem;
+}}
+h3 {{
+  font-size: 0.85rem;
+  font-weight: 500;
+  margin: 1.5rem 0 0.4rem;
+  color: #555;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}}
+p {{
+  margin: 0.5rem 0;
+  color: #555;
+  line-height: 1.9;
+  font-weight: 300;
+  font-size: 0.9rem;
+}}
+strong {{
+  color: #1a1a1a;
+  font-weight: 500;
+}}
+em {{
+  color: #e63946;
+  font-style: normal;
+}}
+ul, ol {{
+  margin: 0.4rem 0 0.4rem 1rem;
+}}
+li {{
+  margin: 0.25rem 0;
+  color: #555;
+  font-weight: 300;
+  font-size: 0.9rem;
+  line-height: 1.7;
+}}
+blockquote {{
+  margin: 1rem 0;
+  padding: 0.4rem 0 0.4rem 1.5rem;
+  border-left: 2px solid #1a1a1a;
+  color: #888;
+  font-weight: 300;
+  font-size: 0.9rem;
+}}
+code {{
+  background: #f5f5f5;
+  padding: 0.1rem 0.4rem;
+  border-radius: 2px;
+  font-size: 0.8em;
+  color: #1a1a1a;
+  font-family: "SF Mono", monospace;
+}}
+pre {{
+  background: #f8f8f8;
+  padding: 1rem 1.2rem;
+  border-radius: 2px;
+  overflow-x: auto;
+  font-size: 0.78rem;
+  margin: 1rem 0;
+  color: #555;
+}}
+table {{
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1.2rem 0;
+  font-size: 0.85rem;
+}}
+th, td {{
+  padding: 0.4rem 0.6rem;
+  text-align: left;
+  border-bottom: 1px solid #eee;
+}}
+th {{
+  font-weight: 500;
+  color: #1a1a1a;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}}
+tr:last-child td {{ border-bottom: none; }}
+hr {{
+  border: none;
+  border-top: 1px solid #eee;
+  margin: 2.5rem 0;
+}}
+.meta {{
+  text-align: center;
+  font-size: 0.65rem;
+  color: #bbb;
+  margin-top: 3rem;
+  letter-spacing: 0.15em;
+  font-weight: 300;
+}}
+@media (max-width:600px) {{ body {{ padding:3rem 1rem 2rem; }} }}
 </style>
 </head>
 <body>
 <div class="container">
 {body}
-<div class="meta">诸葛策 · {date}</div>
+<div class="meta">ZHUGE CE  ·  {date}</div>
 </div>
 </body>
 </html>""",

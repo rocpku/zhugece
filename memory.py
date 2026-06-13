@@ -5,7 +5,7 @@ from datetime import datetime
 from pathlib import Path
 
 DATA_DIR = Path(__file__).parent / "data"
-USER_ID = "chenpeng"
+USER_ID = "default"
 
 
 # ── 用户管理 ──

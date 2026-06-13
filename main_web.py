@@ -21,6 +21,8 @@ sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="repla
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import HTMLResponse, StreamingResponse, Response
 from fastapi.staticfiles import StaticFiles
+from fastapi.middleware.cors import CORSMiddleware
+import httpx
 import uvicorn
 
 from agent import MingYuanAgent
@@ -46,7 +48,8 @@ def init_db():
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             username TEXT UNIQUE NOT NULL,
-            password_hash TEXT NOT NULL,
+            password_hash TEXT,
+            wechat_openid TEXT UNIQUE,
             created_at TEXT NOT NULL
         );
         CREATE TABLE IF NOT EXISTS sessions (
@@ -74,6 +77,13 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_conversations_user ON conversations(user_id);
         CREATE INDEX IF NOT EXISTS idx_messages_conv ON messages(conversation_id);
     """)
+    # 兼容已有数据库：新增列（不能带 UNIQUE 约束，否则已有数据会报错）
+    cols = [row["name"] for row in db.execute("PRAGMA table_info(users)").fetchall()]
+    if "wechat_openid" not in cols:
+        db.execute("ALTER TABLE users ADD COLUMN wechat_openid TEXT")
+        db.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_wechat_openid ON users(wechat_openid)")
+    if "password_hash" not in cols:
+        db.execute("ALTER TABLE users ADD COLUMN password_hash TEXT")
     db.commit()
     db.close()
 
@@ -137,6 +147,15 @@ async def lifespan(app: FastAPI):
     _agents.clear()
 
 app = FastAPI(title="诸葛策", lifespan=lifespan)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 app.mount("/renders", StaticFiles(directory=str(Path(__file__).parent / "renders")), name="renders")
 
 
@@ -149,7 +168,7 @@ def hash_password(password: str) -> str:
     return hashlib.sha256(password.encode()).hexdigest()
 
 
-def create_session(response: Response, user_id: int):
+def create_session(response: Optional[Response], user_id: int) -> str:
     token = secrets.token_hex(32)
     db = get_db()
     db.execute(
@@ -158,14 +177,24 @@ def create_session(response: Response, user_id: int):
     )
     db.commit()
     db.close()
-    response.set_cookie(
-        key=COOKIE_NAME, value=token, httponly=True, max_age=86400 * 30,
-        samesite="lax", path="/"
-    )
+    if response is not None:
+        response.set_cookie(
+            key=COOKIE_NAME, value=token, httponly=True, max_age=86400 * 30,
+            samesite="lax", path="/"
+        )
+    return token
+
+
+_DEFAULT_USER_PREFIX = "wx_"
 
 
 def get_current_user(request: Request) -> Optional[dict]:
+    # Try cookie first, then Authorization header
     token = request.cookies.get(COOKIE_NAME)
+    if not token:
+        auth = request.headers.get("Authorization", "")
+        if auth.startswith("Bearer "):
+            token = auth[7:]
     if not token:
         return None
     db = get_db()
@@ -239,6 +268,88 @@ async def logout():
     resp = Response(json.dumps({"ok": True}), media_type="application/json")
     resp.set_cookie(key=COOKIE_NAME, value="", httponly=True, max_age=0, path="/")
     return resp
+
+
+@app.post("/api/wx-login")
+async def wx_login(request: Request):
+    """微信小程序登录：接收 code，调用微信 jscode2session，返回 token"""
+    body = await request.json()
+    code = body.get("code", "").strip()
+    if not code:
+        raise HTTPException(400, "code is required")
+
+    appid = os.getenv("WECHAT_APPID", "")
+    secret = os.getenv("WECHAT_SECRET", "")
+    if not appid or not secret:
+        raise HTTPException(500, "服务器未配置微信登录")
+
+    async with httpx.AsyncClient() as client:
+        resp = await client.get(
+            "https://api.weixin.qq.com/sns/jscode2session",
+            params={
+                "appid": appid,
+                "secret": secret,
+                "js_code": code,
+                "grant_type": "authorization_code",
+            },
+        )
+    wx_data = resp.json()
+    if "openid" not in wx_data:
+        raise HTTPException(400, f"微信登录失败: {wx_data.get('errmsg', '未知错误')}")
+
+    openid = wx_data["openid"]
+    db = get_db()
+
+    # 查找已有用户
+    row = db.execute("SELECT id, username FROM users WHERE wechat_openid=?", (openid,)).fetchone()
+    is_new = False
+    if row:
+        user_id = row["id"]
+        username = row["username"]
+    else:
+        # 创建新用户（password_hash 设为空占位，因为表有 NOT NULL 约束）
+        username = f"{_DEFAULT_USER_PREFIX}{openid[-8:]}"
+        now = datetime.now().isoformat()
+        cur = db.execute(
+            "INSERT INTO users (username, password_hash, wechat_openid, created_at) VALUES (?,?,?,?)",
+            (username, "", openid, now)
+        )
+        db.commit()
+        user_id = cur.lastrowid
+        is_new = True
+    db.close()
+
+    token = create_session(None, user_id)
+    return {"token": token, "is_new_user": is_new, "username": username}
+
+
+@app.post("/api/dev-login")
+async def dev_login(request: Request):
+    """开发测试：直接返回一个 token（免微信登录），支持指定用户名"""
+    try:
+        body = await request.json()
+        username = (body.get("username") or "").strip()
+    except Exception:
+        username = ""
+    if not username:
+        username = "dev_user"
+
+    now = datetime.now().isoformat()
+    db = get_db()
+    row = db.execute("SELECT id FROM users WHERE username=?", (username,)).fetchone()
+    if row:
+        user_id = row["id"]
+    else:
+        cur = db.execute(
+            "INSERT INTO users (username, password_hash, created_at) VALUES (?,?,?)",
+            (username, "", now)
+        )
+        db.commit()
+        user_id = cur.lastrowid
+    db.close()
+
+    token = create_session(None, user_id)
+    return {"token": token, "user_id": user_id, "username": username}
 
 
 @app.get("/api/me")
@@ -391,6 +502,96 @@ async def chat(request: Request):
             "X-Accel-Buffering": "no",
         },
     )
+
+
+# ── 非流式聊天接口（适合小程序等不支持 SSE 的客户端）──
+
+@app.post("/api/send")
+async def send_message(request: Request):
+    user = require_user(request)
+    body = await request.json()
+    user_message = body.get("message", "").strip()
+    conv_id = body.get("conversation_id", 0)
+
+    if not user_message:
+        raise HTTPException(400, "message is required")
+
+    db = get_db()
+
+    if conv_id:
+        conv = db.execute("SELECT id, title FROM conversations WHERE id=? AND user_id=?", (conv_id, user["id"])).fetchone()
+        if not conv:
+            db.close()
+            raise HTTPException(404, "对话不存在")
+        if conv["title"] == "新对话":
+            title = user_message[:30].strip()
+            if len(title) > 0:
+                db.execute("UPDATE conversations SET title=? WHERE id=?", (title, conv_id))
+                db.commit()
+    else:
+        now = datetime.now().isoformat()
+        title = user_message[:30].strip() or "新对话"
+        cur = db.execute(
+            "INSERT INTO conversations (user_id, title, created_at, updated_at) VALUES (?,?,?,?)",
+            (user["id"], title, now, now)
+        )
+        db.commit()
+        conv_id = cur.lastrowid
+
+    db.close()
+
+    from memory import set_user as _set_user
+    _set_user(user["username"])
+    agent = get_agent_for_conv(user["id"], conv_id)
+
+    _save_message(conv_id, "user", user_message, {"role": "user", "content": user_message})
+    _update_conv_time(conv_id)
+
+    full_response = ""
+    try:
+        for msg_type, content in agent.chat(user_message):
+            if msg_type == "text":
+                full_response += content
+        if full_response:
+            _save_message(conv_id, "assistant", full_response, {"role": "assistant", "content": full_response})
+            _update_conv_time(conv_id)
+    except Exception as e:
+        raise HTTPException(500, f"AI 响应出错: {e}")
+
+    return {"response": full_response, "conversation_id": conv_id}
+
+
+# ── 回退 API（编辑重发用：删除最后一条用户消息及其后的 AI 回复）──
+
+@app.post("/api/conversations/{conv_id}/rewind")
+async def rewind_conversation(conv_id: int, request: Request):
+    user = require_user(request)
+    db = get_db()
+    conv = db.execute("SELECT id FROM conversations WHERE id=? AND user_id=?", (conv_id, user["id"])).fetchone()
+    if not conv:
+        db.close()
+        raise HTTPException(404, "对话不存在")
+
+    # 找到最后一条 user 消息的 id
+    last_user = db.execute(
+        "SELECT id FROM messages WHERE conversation_id=? AND role='user' ORDER BY id DESC LIMIT 1",
+        (conv_id,)
+    ).fetchone()
+    if not last_user:
+        db.close()
+        return {"ok": True, "deleted": 0}
+
+    # 删除该 user 消息及之后的所有消息
+    deleted = db.execute(
+        "DELETE FROM messages WHERE conversation_id=? AND id >= ?",
+        (conv_id, last_user["id"])
+    ).rowcount
+    db.commit()
+    db.close()
+
+    # 清除缓存的 agent，下次自动重建
+    _agents.pop(_agent_key(user["id"], conv_id), None)
+    return {"ok": True, "deleted": deleted}
 
 
 # ── 用户画像 API（基于登录用户）──
@@ -640,14 +841,25 @@ body {
 @keyframes msgIn { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:translateY(0); } }
 .msg.user {
   align-self: flex-end;
+  max-width: 70%;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+}
+.msg.user .msg-bubble {
   background: var(--user-msg);
   color: var(--user-msg-text);
   border-radius: 16px 16px 4px 16px;
   padding: 10px 18px;
   font-size: 14px;
   line-height: 1.65;
-  max-width: 70%;
 }
+/* Action buttons below user messages */
+.msg.user .msg-actions { display:flex; gap:2px; margin-top:2px; opacity:0; transition:opacity 0.15s; padding-right:4px; }
+.msg.user:hover .msg-actions { opacity:1; }
+.msg.user .msg-actions button { background:none; border:none; width:22px; height:22px; border-radius:4px; display:flex; align-items:center; justify-content:center; cursor:pointer; color:var(--ink-lighter); transition:all 0.12s; }
+.msg.user .msg-actions button:hover { background:var(--border); color:var(--ink-light); }
+.msg.user .msg-actions button svg { width:13px; height:13px; fill:currentColor; stroke:currentColor; stroke-width:0.5; }
 .msg.agent {
   align-self: flex-start;
   background: var(--surface);
@@ -743,7 +955,19 @@ body {
 .input-area button:disabled { background:var(--border); cursor:not-allowed; transform:none; }
 .input-area button svg { width:16px; height:16px; fill:currentColor; }
 .input-area.loading .input-wrap { opacity:0.6; }
-.input-area.loading button { background:var(--ink-lighter); }
+.input-area.loading button#sendBtn { display:none; }
+.input-area.loading button#stopBtn { display:flex !important; background:#c33; color:#fff; border:none; border-radius:8px; width:36px; height:36px; display:flex; align-items:center; justify-content:center; cursor:pointer; flex-shrink:0; animation:stopPulse 1.5s ease-in-out infinite; }
+.input-area.loading button#stopBtn:hover { background:#a00; animation:none; }
+@keyframes stopPulse { 0%,100% { box-shadow:0 0 0 0 rgba(204,51,51,0.4); } 50% { box-shadow:0 0 0 6px rgba(204,51,51,0); } }
+
+.msg.user.editing { align-self:flex-end; max-width:80%; background:var(--surface); border:1px solid var(--accent); border-radius:16px; padding:8px 12px; position:relative; }
+.msg.user.editing textarea { width:100%; min-height:64px; border:none; background:transparent; font-size:14px; font-family:var(--font-body); resize:vertical; outline:none; color:var(--ink); line-height:1.6; padding:4px 0; }
+.msg.user.editing .edit-actions { display:flex; gap:6px; margin-top:6px; justify-content:flex-end; }
+.msg.user.editing .edit-actions button { padding:4px 14px; border-radius:6px; font-size:12px; font-family:inherit; cursor:pointer; border:none; transition:all 0.15s; }
+.msg.user.editing .edit-actions .save-btn { background:var(--accent); color:#fff; }
+.msg.user.editing .edit-actions .save-btn:hover { background:#a37d4a; }
+.msg.user.editing .edit-actions .cancel-btn { background:var(--bg); color:var(--ink-light); border:1px solid var(--border); }
+.msg.user.editing .edit-actions .cancel-btn:hover { border-color:var(--ink-lighter); }
 
 @media (max-width:700px) {
   .sidebar { display:none; }
@@ -793,6 +1017,7 @@ body {
       <div class="input-area" id="inputArea">
         <div class="input-wrap">
           <textarea id="input" rows="1" placeholder="输入你的问题…"></textarea>
+          <button id="stopBtn" title="停止生成" style="display:none;"><svg viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor"/></svg></button>
           <button id="sendBtn" title="发送"><svg viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg></button>
         </div>
       </div>
@@ -806,12 +1031,25 @@ body {
 let currentConvId = 0;
 let convs = [];
 let loading = false;
+let abortController = null;
+let lastUserMsgEl = null;
 
 const $ = id => document.getElementById(id);
 const msgEl = $('messages');
 const inputEl = $('input');
 const sendBtn = $('sendBtn');
+const stopBtn = $('stopBtn');
 const inputArea = $('inputArea');
+
+function restoreInput() {
+  loading = false;
+  abortController = null;
+  inputArea.classList.remove('loading');
+  sendBtn.disabled = false;
+  inputEl.disabled = false;
+  stopBtn.style.display = 'none';
+  inputEl.focus();
+}
 
 // ── Auth ──
 let authMode = 'login';
@@ -905,7 +1143,7 @@ async function selectConv(convId) {
   const msgs = await (await fetch('/api/conversations/' + convId + '/history')).json();
   if (msgs.length > 0) {
     for (const m of msgs) {
-      if (m.role === 'user') addMessage('user', escapeHtml(m.content));
+      if (m.role === 'user') addMessage('user', escapeHtml(m.content), m.content);
       else addMessage('agent', marked.parse(m.content));
     }
   } else {
@@ -920,13 +1158,95 @@ function showWelcome(name) {
 }
 
 // ── Chat ──
-function addMessage(role, content) {
+function addMessage(role, content, rawText) {
   const div = document.createElement('div');
   div.className = 'msg ' + role;
-  div.innerHTML = content;
+  if (role === 'user') {
+    div.dataset.rawText = rawText || content;
+    div.innerHTML = '<div class="msg-bubble">' + content + '</div>';
+    // Three action buttons
+    const actions = document.createElement('div');
+    actions.className = 'msg-actions';
+    actions.innerHTML =
+      '<button class="copy-btn" title="复制">' +
+        '<svg viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2" stroke="currentColor" stroke-width="1.5" fill="none"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" stroke="currentColor" stroke-width="1.5" fill="none"/></svg>' +
+      '</button>' +
+      '<button class="regen-btn" title="重新生成">' +
+        '<svg viewBox="0 0 24 24"><path d="M17.65 6.35A7.96 7.96 0 0 0 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0 1 12 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z" fill="currentColor"/></svg>' +
+      '</button>' +
+      '<button class="edit-btn" title="编辑">' +
+        '<svg viewBox="0 0 24 24"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z" fill="currentColor"/></svg>' +
+      '</button>';
+    div.appendChild(actions);
+  } else {
+    div.innerHTML = content;
+  }
   msgEl.appendChild(div);
   requestAnimationFrame(() => msgEl.scrollTop = msgEl.scrollHeight);
+
+  // Bind action handlers
+  if (role === 'user') {
+    const raw = div.dataset.rawText;
+    div.querySelector('.copy-btn').onclick = () => {
+      navigator.clipboard.writeText(raw).catch(() => {});
+    };
+    div.querySelector('.regen-btn').onclick = () => regenerate(div);
+    div.querySelector('.edit-btn').onclick = () => startEdit(div);
+    if (rawText != null) lastUserMsgEl = div;
+  }
   return div;
+}
+
+function startEdit(msgDiv) {
+  const origText = msgDiv.dataset.rawText || '';
+  msgDiv.className = 'msg user editing';
+  msgDiv.innerHTML = '<textarea class="edit-textarea">' + escapeHtml(origText) + '</textarea>' +
+    '<div class="edit-actions">' +
+      '<button class="cancel-btn">取消</button>' +
+      '<button class="save-btn">发送</button>' +
+    '</div>';
+  const ta = msgDiv.querySelector('textarea');
+  const saveBtn = msgDiv.querySelector('.save-btn');
+  const cancelBtn = msgDiv.querySelector('.cancel-btn');
+  ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length);
+  saveBtn.onclick = () => doEdit(msgDiv, ta.value.trim());
+  cancelBtn.onclick = () => { restoreMsgActions(msgDiv, origText); };
+  ta.onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); doEdit(msgDiv, ta.value.trim()); } };
+}
+
+function restoreMsgActions(msgDiv, text) {
+  msgDiv.className = 'msg user';
+  msgDiv.innerHTML = '<div class="msg-bubble">' + escapeHtml(text) + '</div>' +
+    '<div class="msg-actions">' +
+      '<button class="copy-btn" title="复制"><svg viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2" stroke="currentColor" stroke-width="1.5" fill="none"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" stroke="currentColor" stroke-width="1.5" fill="none"/></svg></button>' +
+      '<button class="regen-btn" title="重新生成"><svg viewBox="0 0 24 24"><path d="M17.65 6.35A7.96 7.96 0 0 0 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0 1 12 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z" fill="currentColor"/></svg></button>' +
+      '<button class="edit-btn" title="编辑"><svg viewBox="0 0 24 24"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z" fill="currentColor"/></svg></button>' +
+    '</div>';
+  msgDiv.querySelector('.copy-btn').onclick = () => navigator.clipboard.writeText(text).catch(() => {});
+  msgDiv.querySelector('.regen-btn').onclick = () => regenerate(msgDiv);
+  msgDiv.querySelector('.edit-btn').onclick = () => startEdit(msgDiv);
+}
+
+async function doEdit(msgDiv, newText) {
+  if (!newText || !currentConvId) return;
+  await fetch('/api/conversations/' + currentConvId + '/rewind', {method:'POST'});
+  msgDiv.remove();
+  const msgs = msgEl.querySelectorAll('.msg');
+  const lastAi = msgs[msgs.length - 1];
+  if (lastAi && lastAi.classList.contains('agent')) lastAi.remove();
+  inputEl.value = newText;
+  send();
+}
+
+async function regenerate(msgDiv) {
+  if (!currentConvId) return;
+  await fetch('/api/conversations/' + currentConvId + '/rewind', {method:'POST'});
+  msgDiv.remove();
+  const msgs = msgEl.querySelectorAll('.msg');
+  const lastAi = msgs[msgs.length - 1];
+  if (lastAi && lastAi.classList.contains('agent')) lastAi.remove();
+  inputEl.value = msgDiv.dataset.rawText || '';
+  send();
 }
 
 function escapeHtml(t) {
@@ -959,16 +1279,18 @@ async function send() {
   inputEl.style.height = 'auto';
   msgEl.querySelector('.welcome')?.remove();
 
-  addMessage('user', escapeHtml(text));
+  addMessage('user', escapeHtml(text), true);
   loading = true;
   inputArea.classList.add('loading');
   sendBtn.disabled = true;
   inputEl.disabled = true;
+  stopBtn.style.display = '';
 
   const dots = '<div class="thinking-dots"><span></span><span></span><span></span></div>';
   const msgDiv = addMessage('agent', dots);
   let toolStatus = null;
   let content = '';
+  let wasAborted = false;
 
   function showToolStatus(text) {
     if (!toolStatus) {
@@ -992,11 +1314,15 @@ async function send() {
     if (toolStatus) { toolStatus.remove(); toolStatus = null; }
   }
 
+  abortController = new AbortController();
+  stopBtn.onclick = () => { abortController.abort(); };
+
   try {
     const resp = await fetch('/api/chat', {
       method: 'POST',
       headers: {'Content-Type':'application/json'},
       body: JSON.stringify({message: text, conversation_id: currentConvId}),
+      signal: abortController.signal,
     });
     if (!resp.ok) throw new Error('请求失败');
     const reader = resp.body.getReader();
@@ -1018,7 +1344,6 @@ async function send() {
             showToolStatus('⏳ ' + escapeHtml(p.content));
           } else if (p.type === 'render_done') {
             hideToolStatus();
-            // 显示页面已生成通知 & 自动打开
             const pageUrl = p.content;
             const notif = document.createElement('div');
             notif.style.cssText = 'background:var(--accent-bg,#f5f0e8);border:1px solid var(--accent);border-radius:8px;padding:10px 14px;margin:6px 0;align-self:flex-start;animation:msgIn 0.3s ease;font-size:13px;';
@@ -1032,17 +1357,21 @@ async function send() {
       requestAnimationFrame(() => msgEl.scrollTop = msgEl.scrollHeight);
     }
   } catch(e) {
-    msgDiv.innerHTML = '<p style="color:#b33;">连接失败，请确认服务器正在运行</p>';
+    if (e.name === 'AbortError') {
+      wasAborted = true;
+      hideToolStatus();
+      if (content) {
+        msgDiv.innerHTML = marked.parse(content + '\n\n> ⏸️ **已停止**').replace(/<a\s+href=/g, '<a target="_blank" href=');
+      } else {
+        msgDiv.innerHTML = '<p style="color:var(--ink-lighter);font-style:italic;font-size:13px;">⏸️ 已停止</p>';
+      }
+    } else {
+      msgDiv.innerHTML = '<p style="color:#b33;">连接失败，请确认服务器正在运行</p>';
+    }
   }
 
-  loading = false;
-  inputArea.classList.remove('loading');
-  sendBtn.disabled = false;
-  inputEl.disabled = false;
-  inputEl.focus();
-
-  // 重新加载对话列表（可能标题变了）
-  loadConvs();
+  restoreInput();
+  if (!wasAborted) loadConvs();
 }
 
 // ── 初始检查 ──
