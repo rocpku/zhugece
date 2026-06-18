@@ -1,0 +1,129 @@
+/* components/message/message.wxss */
+
+.msg-wrapper {
+  padding: 14rpx 28rpx;
+  display: flex;
+  flex-direction: column;
+  animation: msgSlideIn 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+}
+@keyframes msgSlideIn {
+  from { opacity: 0; transform: translateY(16rpx); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* 用户消息 — 右对齐 */
+.msg-wrapper.user {
+  align-items: flex-end;
+}
+
+/* AI 消息 — 左对齐 */
+.msg-wrapper.agent {
+  align-items: flex-start;
+}
+
+/* ── 气泡基础 ── */
+.msg-bubble {
+  max-width: 82%;
+  border-radius: 22rpx;
+  padding: 22rpx 28rpx;
+  position: relative;
+  word-break: break-word;
+}
+
+/* ── 用户气泡 ── */
+.user-bubble {
+  background: var(--primary-gradient, linear-gradient(135deg, #4E6EF2, #6C7BFF));
+  color: #FFF;
+  border-bottom-right-radius: 10rpx;
+  box-shadow: 0 4rpx 16rpx rgba(78, 110, 242, 0.2);
+}
+.user-bubble .msg-label {
+  font-size: 22rpx;
+  opacity: 0.7;
+  margin-bottom: 6rpx;
+  font-weight: 500;
+}
+
+/* ── AI 气泡 ── */
+.agent-bubble {
+  background: #FFF;
+  color: #1D1D1F;
+  border-bottom-left-radius: 10rpx;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.04), 0 1px 2px rgba(0,0,0,0.03);
+}
+.agent-bubble .msg-label {
+  font-size: 22rpx;
+  color: #8E8E93;
+  margin-bottom: 6rpx;
+  font-weight: 600;
+}
+
+/* ── 消息内容 ── */
+.msg-content {
+  font-size: 30rpx;
+  line-height: 1.7;
+}
+
+/* rich-text 内容样式 */
+.msg-content rich-text h1,
+.msg-content rich-text h2,
+.msg-content rich-text h3 {
+  font-size: 1.1em;
+  font-weight: 700;
+  margin: 0.6em 0 0.3em;
+  color: inherit;
+}
+.msg-content rich-text p {
+  margin: 0.3em 0;
+}
+.msg-content rich-text strong {
+  font-weight: 700;
+  color: inherit;
+}
+
+/* 代码块 */
+.msg-content rich-text pre {
+  background: rgba(78, 110, 242, 0.06);
+  padding: 16rpx 20rpx;
+  border-radius: 14rpx;
+  overflow-x: auto;
+  font-size: 26rpx;
+  margin: 0.4em 0;
+  color: #4A4A4F;
+  border: 1rpx solid rgba(78, 110, 242, 0.1);
+}
+.msg-content rich-text code {
+  background: rgba(78, 110, 242, 0.08);
+  padding: 3rpx 10rpx;
+  border-radius: 6rpx;
+  font-size: 26rpx;
+  color: var(--primary, #4E6EF2);
+}
+
+/* 列表 */
+.msg-content rich-text ul,
+.msg-content rich-text ol {
+  padding-left: 1.5em;
+  margin: 0.3em 0;
+}
+.msg-content rich-text li {
+  margin: 0.15em 0;
+}
+
+/* 引用 */
+.msg-content rich-text blockquote {
+  border-left: 4rpx solid var(--primary, #4E6EF2);
+  padding: 6rpx 20rpx;
+  margin: 0.4em 0;
+  color: #8E8E93;
+  font-size: 0.95em;
+  background: rgba(78, 110, 242, 0.04);
+  border-radius: 0 10rpx 10rpx 0;
+}
+
+/* 分隔线 */
+.msg-content rich-text hr {
+  border: none;
+  border-top: 1rpx solid #E8E8ED;
+  margin: 0.6em 0;
+}

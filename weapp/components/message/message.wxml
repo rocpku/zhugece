@@ -1,0 +1,10 @@
+<!-- components/message/message.wxml -->
+<view class="msg-wrapper {{role === 'user' ? 'user' : 'agent'}}">
+  <view class="msg-bubble {{role === 'user' ? 'user-bubble' : 'agent-bubble'}}">
+    <view class="msg-label" wx:if="{{role === 'agent'}}">诸葛策</view>
+    <view class="msg-content">
+      <rich-text nodes="{{formattedContent}}" wx:if="{{role === 'agent'}}"></rich-text>
+      <view wx:else>{{content}}</view>
+    </view>
+  </view>
+</view>

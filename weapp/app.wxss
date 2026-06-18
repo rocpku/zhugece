@@ -1,0 +1,24 @@
+/* app.wxss — 全局样式 */
+page {
+  --primary: #4E6EF2;
+  --primary-light: #E8ECFF;
+  --primary-gradient: linear-gradient(135deg, #4E6EF2, #6C7BFF);
+  --bg: #F2F3F7;
+  --card: #FFFFFF;
+  --text: #1D1D1F;
+  --text-secondary: #8E8E93;
+  --text-tertiary: #B0B0B8;
+  --border: #E8E8ED;
+  --shadow-sm: 0 1px 2px rgba(0,0,0,0.04);
+  --shadow-md: 0 2px 8px rgba(0,0,0,0.06);
+  --radius-sm: 12rpx;
+  --radius-md: 20rpx;
+  --radius-lg: 28rpx;
+
+  background: var(--bg);
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
+  color: var(--text);
+  height: 100vh;
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+}

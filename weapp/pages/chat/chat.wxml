@@ -1,0 +1,149 @@
+<!-- pages/chat/chat.wxml -->
+<view class="page">
+
+  <!-- 侧栏遮罩 -->
+  <view class="sidebar-mask {{sidebarOpen ? 'show' : ''}}" bindtap="closeSidebar" catchtouchmove="preventMove"></view>
+
+  <!-- 对话列表侧栏 -->
+  <view class="sidebar {{sidebarOpen ? 'open' : ''}}">
+    <view class="sidebar-head">
+      <text class="sidebar-title">对话记录</text>
+      <view class="sidebar-close" bindtap="closeSidebar">✕</view>
+    </view>
+
+    <!-- 账号 -->
+    <view class="account-row">
+      <view class="account-avatar">{{currentUsername[0]}}</view>
+      <view class="account-meta">
+        <text class="account-name">{{currentUsername}}</text>
+        <text class="account-hint" bindtap="showAccountSwitch">切换账号</text>
+      </view>
+    </view>
+
+    <!-- 新对话 -->
+    <view class="new-chat-cell" bindtap="newConversation">
+      <text class="new-chat-icon">+</text>
+      <text class="new-chat-label">新建对话</text>
+    </view>
+
+    <!-- 账号切换弹层 -->
+    <view class="switch-panel" wx:if="{{showAccountInput}}">
+      <input
+        class="switch-input"
+        type="text"
+        placeholder="输入用户名"
+        value="{{accountInputValue}}"
+        bindinput="onAccountInput"
+        bindconfirm="confirmAccountSwitch"
+        confirm-type="done"
+      />
+      <view class="switch-actions">
+        <view class="switch-cancel" bindtap="cancelAccountSwitch">取消</view>
+        <view class="switch-ok" bindtap="confirmAccountSwitch">确定</view>
+      </view>
+    </view>
+
+    <!-- 对话列表 -->
+    <scroll-view class="conv-list" scroll-y>
+      <view
+        wx:for="{{conversations}}"
+        wx:key="id"
+        class="conv-item {{item.id === currentConvId ? 'active' : ''}}"
+        data-id="{{item.id}}"
+        bindtap="switchConversation"
+      >
+        <view class="conv-icon">💬</view>
+        <view class="conv-info">
+          <text class="conv-title">{{item.title || '新对话'}}</text>
+          <text class="conv-time">{{item.updated_at || ''}}</text>
+        </view>
+      </view>
+      <view class="empty-hint" wx:if="{{conversations.length === 0}}">
+        <text class="empty-icon">📝</text>
+        <text>暂无对话，开始聊天吧</text>
+      </view>
+    </scroll-view>
+  </view>
+
+  <!-- 主聊天区 -->
+  <view class="chat-area">
+    <!-- 顶部栏 — 白色极简 -->
+    <view class="top-bar" style="padding-top: {{statusBarHeight}}px; height: {{navBarHeight}}px;">
+      <view class="top-left" bindtap="toggleSidebar">
+        <view class="hamburger">
+          <view class="hamburger-line"></view>
+          <view class="hamburger-line"></view>
+          <view class="hamburger-line"></view>
+        </view>
+      </view>
+      <text class="top-title">诸葛策</text>
+      <view class="top-right"></view>
+    </view>
+
+    <!-- 消息列表 -->
+    <scroll-view class="messages" scroll-y scroll-into-view="{{scrollToId}}" scroll-with-animation>
+      <!-- 空态欢迎 -->
+      <view wx:if="{{messages.length === 0}}" class="welcome">
+        <view class="welcome-logo">
+          <text class="welcome-char">策</text>
+        </view>
+        <text class="welcome-title">你好，我是诸葛策</text>
+        <text class="welcome-desc">谋定而后动，知止而有得。有什么我可以帮你？</text>
+
+        <!-- 推荐问题 -->
+        <view class="suggestions">
+          <view class="suggest-item" bindtap="onSuggestion" data-text="我该如何规划我的职业生涯？">
+            <text class="suggest-icon">💼</text>
+            <text>我该如何规划我的职业生涯？</text>
+          </view>
+          <view class="suggest-item" bindtap="onSuggestion" data-text="帮我分析一下当前行业的趋势">
+            <text class="suggest-icon">📊</text>
+            <text>帮我分析一下当前行业的趋势</text>
+          </view>
+          <view class="suggest-item" bindtap="onSuggestion" data-text="如何提升自己的核心竞争力？">
+            <text class="suggest-icon">🎯</text>
+            <text>如何提升自己的核心竞争力？</text>
+          </view>
+        </view>
+      </view>
+
+      <!-- 消息列表 -->
+      <block wx:for="{{messages}}" wx:key="index">
+        <message role="{{item.role}}" content="{{item.content}}"></message>
+      </block>
+
+      <!-- 加载指示 -->
+      <view class="loading-indicator" wx:if="{{loading}}">
+        <view class="loading-bubble">
+          <view class="thinking-dots">
+            <view class="t-dot"></view>
+            <view class="t-dot"></view>
+            <view class="t-dot"></view>
+          </view>
+        </view>
+      </view>
+
+      <view id="bottom"></view>
+    </scroll-view>
+
+    <!-- 输入区 — 浮动卡片 -->
+    <view class="input-shell">
+      <view class="input-card {{loading ? 'disabled' : ''}}">
+        <input
+          class="input-field"
+          type="text"
+          placeholder="输入你的问题…"
+          value="{{inputValue}}"
+          bindinput="onInput"
+          bindconfirm="onSend"
+          disabled="{{loading}}"
+          confirm-type="send"
+          cursor-spacing="12"
+        />
+        <view class="send-icon {{inputValue.trim() ? 'active' : ''}}" bindtap="onSend">
+          <text class="send-arrow">↑</text>
+        </view>
+      </view>
+    </view>
+  </view>
+</view>

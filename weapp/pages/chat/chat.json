@@ -1,0 +1,7 @@
+{
+  "usingComponents": {
+    "message": "../../components/message/message"
+  },
+  "navigationStyle": "custom",
+  "disableScroll": true
+}

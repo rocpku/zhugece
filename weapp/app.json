@@ -1,0 +1,14 @@
+{
+  "pages": [
+    "pages/chat/chat"
+  ],
+  "window": {
+    "navigationBarTitleText": "诸葛策",
+    "navigationBarBackgroundColor": "#3a3530",
+    "navigationBarTextStyle": "white",
+    "backgroundColor": "#f6f4ef",
+    "backgroundTextStyle": "dark"
+  },
+  "style": "v2",
+  "sitemapLocation": "sitemap.json"
+}
