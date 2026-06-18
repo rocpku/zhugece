@@ -7,6 +7,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
+RUN mkdir -p renders data
+
 EXPOSE 8080
 
 CMD ["uvicorn", "main_web:app", "--host", "0.0.0.0", "--port", "8080"]
