@@ -3,7 +3,7 @@
 import json
 import os
 import re
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from dotenv import load_dotenv
 from openai import OpenAI
 
@@ -135,7 +135,8 @@ class MingYuanAgent:
 
     def _build_system_prompt(self) -> str:
         context = load_full_context()
-        now = datetime.now()
+        beijing_tz = timezone(timedelta(hours=8))
+        now = datetime.now(beijing_tz)
         time_str = now.strftime("%Y-%m-%d %H:%M")
         weekdays = ["星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日"]
         weekday = weekdays[now.weekday()]
