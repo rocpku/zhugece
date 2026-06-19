@@ -112,9 +112,7 @@ def init_db():
         except Exception:
             pass  # 索引已存在则跳过
 
-    # 清理旧版 bug 遗留的 default 用户数据（未调用 set_user 时的脏数据）
-    for table in ["profiles", "journal", "decisions"]:
-        db.execute(f"DELETE FROM {table} WHERE user_id='default'")
+    # default 用户数据保留（修复前遗留的引导数据），load_profile 会回退读取
     db.commit()
     db.close()
 
@@ -321,7 +319,7 @@ async def onboard(request: Request):
         greeting = "你好！"
 
     welcome = (
-        f"你好 {greeting} 🙌\n\n"
+        f"{greeting} 🙌\n\n"
         "我是**诸葛策**，你的专属人生军师。\n\n"
         "我能帮你做这些事：\n\n"
         "📋 **梳理现状** — 分析职业、财务、健康等各方面\n"

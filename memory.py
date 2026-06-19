@@ -48,6 +48,9 @@ def _deep_merge(base: dict, update: dict):
 def load_profile() -> dict:
     db = get_db()
     row = db.execute("SELECT data FROM profiles WHERE user_id=%s", (_USER_ID,)).fetchone()
+    # 修复前的数据存在 user_id='default' 下，做回退读取
+    if not row and _USER_ID != "default":
+        row = db.execute("SELECT data FROM profiles WHERE user_id='default'").fetchone()
     db.close()
     if row:
         data = json.loads(row["data"])
