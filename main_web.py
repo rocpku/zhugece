@@ -1546,6 +1546,48 @@ body {
   animation: welcomeFade 0.6s ease both;
   animation-delay: 0.2s;
 }
+.landing-page .lp-features {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  margin-bottom: 36px;
+  animation: welcomeFade 0.6s ease both;
+  animation-delay: 0.25s;
+}
+.landing-page .lp-feature-card {
+  background: var(--surface);
+  border: 1px solid var(--border-light);
+  border-radius: 12px;
+  padding: 20px 18px;
+  transition: all 0.3s ease;
+  cursor: default;
+}
+.landing-page .lp-feature-card:hover {
+  border-color: var(--accent-light);
+  box-shadow: 0 6px 24px rgba(184,146,90,0.1);
+  transform: translateY(-3px);
+}
+.landing-page .lp-feature-card .lp-fc-icon {
+  width: 34px; height: 34px;
+  border-radius: 9px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 10px;
+}
+.landing-page .lp-feature-card .lp-fc-icon svg { width: 18px; height: 18px; }
+.landing-page .lp-feature-card .lp-fc-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink);
+  letter-spacing: 0.04em;
+  margin-bottom: 6px;
+}
+.landing-page .lp-feature-card .lp-fc-desc {
+  font-size: 12.5px;
+  color: var(--ink-lighter);
+  line-height: 1.6;
+}
 .landing-page .lp-actions {
   display: flex;
   gap: 14px;
@@ -1588,6 +1630,8 @@ body {
   .landing-page { padding: 40px 20px; }
   .landing-page .lp-logo { width: 72px; height: 72px; }
   .landing-page .lp-title { font-size: 32px; }
+  .landing-page .lp-features { gap: 10px; }
+  .landing-page .lp-feature-card { padding: 14px 14px; }
   .landing-page::before { font-size: 180px; right: -20px; bottom: -20px; }
 }
 
@@ -1687,24 +1731,50 @@ body {
   <div class="lp-inner">
     <div class="lp-hero">
       <div class="lp-logo">
-        <svg viewBox="0 0 120 120" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round">
-          <!-- 纶巾帽檐 -->
-          <path d="M20 58 Q60 68 100 58" stroke-width="4"/>
-          <!-- 帽顶 -->
-          <path d="M28 58 Q28 20 60 16 Q92 20 92 58"/>
+        <svg viewBox="0 0 100 100" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <!-- 纶巾侧面：帽身 -->
+          <path d="M22 52 Q18 12 45 10 Q75 12 82 46"/>
+          <!-- 束带 -->
+          <path d="M18 46 Q48 54 84 46" stroke-width="4"/>
+          <!-- 侧面飘带 -->
+          <path d="M82 48 Q90 68 78 86 Q74 94 78 102"/>
           <!-- 帽褶 -->
-          <path d="M46 28 Q60 24 74 28" stroke-width="1.6" opacity="0.45"/>
-          <!-- 左侧飘带 -->
-          <path d="M24 60 Q18 74 26 88 Q30 94 24 102"/>
-          <!-- 右侧飘带 -->
-          <path d="M96 60 Q102 74 94 88 Q90 94 96 102"/>
-          <!-- 帽饰 -->
-          <rect x="55" y="36" width="10" height="10" rx="2" fill="currentColor" stroke="none"/>
+          <path d="M38 16 Q52 14 62 18" stroke-width="1.5" opacity="0.4"/>
         </svg>
       </div>
       <div class="lp-title">诸葛策</div>
       <div class="lp-slogan">融合东方智慧与现代 AI</div>
       <div class="lp-desc">助你洞察自我、规划生涯、决胜未来</div>
+    </div>
+    <div class="lp-features">
+      <div class="lp-feature-card">
+        <div class="lp-fc-icon" style="background:var(--accent-light);color:var(--accent);">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+        </div>
+        <div class="lp-fc-title">生涯战略</div>
+        <div class="lp-fc-desc">结合命理与规划，洞察人生方向，做出真正适合你的长期选择</div>
+      </div>
+      <div class="lp-feature-card">
+        <div class="lp-fc-icon" style="background:#e8e0d8;color:#6b6258;">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M20 21a8 8 0 1 0-16 0"/></svg>
+        </div>
+        <div class="lp-fc-title">自我认知</div>
+        <div class="lp-fc-desc">深度用户画像分析，发现优势盲区，建立清晰的自我定位</div>
+      </div>
+      <div class="lp-feature-card">
+        <div class="lp-fc-icon" style="background:var(--accent-light);color:var(--accent);">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+        </div>
+        <div class="lp-fc-title">决策参谋</div>
+        <div class="lp-fc-desc">关键选择时刻，多维分析利弊，让你每次决定都有底气</div>
+      </div>
+      <div class="lp-feature-card">
+        <div class="lp-fc-icon" style="background:#e8e0d8;color:#6b6258;">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-9-9" stroke-linecap="round"/><path d="M21 3v6h-6"/></svg>
+        </div>
+        <div class="lp-fc-title">运势洞察</div>
+        <div class="lp-fc-desc">把握时机节奏，顺势而为，在对的时间做对的事</div>
+      </div>
     </div>
     <div class="lp-actions">
       <button class="lp-btn lp-btn-primary" id="landingLoginBtn">登录</button>
