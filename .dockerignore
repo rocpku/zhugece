@@ -11,4 +11,5 @@ __pycache__
 .claude
 weapp
 data/*.db
+data_backup_chenpeng
 *.md
