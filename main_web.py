@@ -1997,7 +1997,8 @@ function openAuth(mode) {
   setTimeout(() => $('authUser').focus(), 200);
 
   if (mode === 'register') {
-    $('authToggle').click();  // switch to register UI
+    authMode = 'login';  // 重置让 toggle 正确翻转
+    $('authToggle').click();
   }
 }
 
