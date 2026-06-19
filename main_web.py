@@ -1704,7 +1704,7 @@ body {
       </div>
       <div class="lp-title">诸葛策</div>
       <div class="lp-slogan">融合东方智慧与现代 AI</div>
-      <div class="lp-desc">你的专属人生战略参谋</div>
+      <div class="lp-desc">助你洞察自我、规划生涯、决胜未来</div>
     </div>
     <div class="lp-actions">
       <button class="lp-btn lp-btn-primary" id="landingLoginBtn">登录</button>
@@ -2134,7 +2134,7 @@ function showWelcome(name) {
   msgEl.innerHTML = '<div class="welcome">' +
     '<div class="hero-title">' + (userName ? '你好，<em>' + userName + '</em>' : '知 <em>人</em> 者智，<br>自 <em>知</em> 者明') + '</div>' +
     '<div class="hero-desc">' + (userName
-      ? '融合东方智慧与现代 AI，我是你的专属人生战略参谋。'
+      ? '融合东方智慧与现代 AI，助你洞察自我、规划生涯、决胜未来。'
       : '融合东方智慧与现代 AI，助你洞察自我、规划生涯、决胜未来。') +
     '</div>' +
     '<div class="prompts">' +
