@@ -92,6 +92,18 @@ def init_db():
             saved_at VARCHAR(50) NOT NULL
         )
     """)
+    db.execute("""
+        CREATE TABLE IF NOT EXISTS user_questions (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            username VARCHAR(255) NOT NULL,
+            question TEXT NOT NULL,
+            answer_hash VARCHAR(255) NOT NULL
+        )
+    """)
+    try:
+        db.execute("ALTER TABLE users ADD COLUMN total_turns INT NOT NULL DEFAULT 0")
+    except Exception:
+        pass  # 列已存在则跳过
     for idx_def in ["idx_sessions_token ON sessions(token)",
                      "idx_conversations_user ON conversations(user_id)",
                      "idx_messages_conv ON messages(conversation_id)"]:
@@ -135,12 +147,14 @@ def _restore_messages(agent: MingYuanAgent, conv_id: int):
         agent.messages.append(msg)
 
 
-def _save_message(conv_id: int, role: str, content, msg_dict: dict):
+def _save_message(conv_id: int, role: str, content, msg_dict: dict, user_id: int = 0):
     db = get_db()
     db.execute(
         "INSERT INTO messages (conversation_id, role, content, msg_json, created_at) VALUES (%s,%s,%s,%s,%s)",
         (conv_id, role, content or "", json.dumps(msg_dict, ensure_ascii=False), datetime.now().isoformat())
     )
+    if role == "assistant" and user_id:
+        db.execute("UPDATE users SET total_turns = total_turns + 1 WHERE id=%s", (user_id,))
     db.commit()
     db.close()
 
@@ -237,9 +251,9 @@ async def register(request: Request):
     body = await request.json()
     username = body.get("username", "").strip()
     password = body.get("password", "").strip()
+    security_questions = body.get("security_questions", [])
     if len(username) < 2 or len(password) < 4:
         raise HTTPException(400, "用户名至少2字符，密码至少4字符")
-
     db = get_db()
     existing = db.execute("SELECT id FROM users WHERE username=%s", (username,)).fetchone()
     if existing:
@@ -251,11 +265,82 @@ async def register(request: Request):
     )
     db.commit()
     user_id = db.execute("SELECT id FROM users WHERE username=%s", (username,)).fetchone()["id"]
+
+    for q in security_questions:
+        db.execute(
+            "INSERT INTO user_questions (username, question, answer_hash) VALUES (%s,%s,%s)",
+            (username, q["question"], hashlib.sha256(q["answer"].strip().lower().encode()).hexdigest())
+        )
+    db.commit()
     db.close()
 
     resp = Response(json.dumps({"ok": True}, ensure_ascii=False), media_type="application/json")
     create_session(resp, user_id)
     return resp
+
+
+@app.post("/api/onboard")
+async def onboard(request: Request):
+    user = require_user(request)
+    body = await request.json()
+    name = body.get("name", "").strip()
+    city = body.get("city", "").strip()
+    focus = body.get("focus", "").strip()
+
+    # 保存画像
+    profile_data = {k: v for k, v in [("name", name), ("city", city), ("focus_area", focus)] if v}
+    profile_data["onboarded_at"] = datetime.now().isoformat()
+    from memory import save_profile
+    save_profile(profile_data)
+
+    # 创建首条对话
+    now = datetime.now().isoformat()
+    title = f"{name or '新用户'}的规划" if focus else "新对话"
+    db = get_db()
+    cur = db.execute(
+        "INSERT INTO conversations (user_id, title, created_at, updated_at) VALUES (%s,%s,%s,%s)",
+        (user["id"], title, now, now)
+    )
+    db.commit()
+    conv_id = cur.lastrowid
+    db.close()
+
+    # 生成欢迎语
+    parts = [f"我叫{name}"] if name else []
+    if city: parts.append(f"在{city}")
+    if focus: parts.append(f"想聊聊{focus}")
+    greeting = "，".join(parts) + "！" if parts else "你好！"
+
+    welcome = (
+        f"你好 {greeting} 🙌\n\n"
+        "我是**诸葛策**，你的专属人生军师。\n\n"
+        "我能帮你做这些事：\n\n"
+        "📋 **梳理现状** — 分析职业、财务、健康等各方面\n"
+        "🎯 **规划目标** — 制定短期和长期计划\n"
+        "🧠 **辅助决策** — 多角度分析，更明智的选择\n"
+        "📝 **记录复盘** — 写日记、做决策、追踪进展"
+    )
+    if focus:
+        welcome += f"\n\n你选择了 **{focus}** 方向，这正是我擅长的领域之一。我们可以从这里开始深入聊聊。"
+
+    welcome += "\n\n有什么想问的，直接说就行 😊"
+
+    from memory import set_user as _set_user
+    _set_user(user["username"])
+    _save_message(conv_id, "assistant", welcome, {"role": "assistant", "content": welcome}, user["id"])
+    _update_conv_time(conv_id)
+
+    return {"conv_id": conv_id, "welcome": welcome}
+
+
+@app.get("/api/check-username")
+async def check_username(username: str = ""):
+    if len(username) < 2:
+        return {"available": False}
+    db = get_db()
+    row = db.execute("SELECT id FROM users WHERE username=%s", (username,)).fetchone()
+    db.close()
+    return {"available": row is None}
 
 
 @app.post("/api/login")
@@ -367,6 +452,78 @@ async def dev_login(request: Request):
     return {"token": token, "user_id": user_id, "username": username}
 
 
+# ── 密保问题 API ──
+
+SECURITY_QUESTIONS_POOL = [
+    "你的小学名称是什么？",
+    "你的初中名称是什么？",
+    "你的高中名称是什么？",
+    "你最喜欢的电影是什么？",
+    "你最喜欢的书籍是什么？",
+    "你最喜欢的动物是什么？",
+    "你的出生城市是哪里？",
+    "你母亲的姓氏是什么？",
+    "你父亲的姓氏是什么？",
+    "你的第一位班主任名字是什么？",
+    "你最喜欢的食物是什么？",
+    "你最想去旅游的国家是哪里？",
+]
+
+
+@app.get("/api/user-questions")
+async def get_user_questions(username: str = ""):
+    if not username:
+        raise HTTPException(400, "请提供用户名")
+    db = get_db()
+    rows = db.execute(
+        "SELECT question FROM user_questions WHERE username=%s ORDER BY id",
+        (username,)
+    ).fetchall()
+    db.close()
+    if not rows:
+        raise HTTPException(404, "用户不存在或未设置密保问题")
+    return {"questions": [r["question"] for r in rows]}
+
+
+@app.post("/api/reset-password")
+async def reset_password(request: Request):
+    body = await request.json()
+    username = body.get("username", "").strip()
+    answers = body.get("answers", [])
+    new_password = body.get("new_password", "").strip()
+
+    if not username or not answers or len(new_password) < 4:
+        raise HTTPException(400, "参数不完整")
+    if len(answers) < 2:
+        raise HTTPException(400, "请回答所有密保问题")
+
+    db = get_db()
+    rows = db.execute(
+        "SELECT answer_hash FROM user_questions WHERE username=%s ORDER BY id",
+        (username,)
+    ).fetchall()
+    if not rows:
+        db.close()
+        raise HTTPException(404, "用户不存在或未设置密保问题")
+
+    for i, row in enumerate(rows):
+        if i >= len(answers):
+            break
+        user_answer_hash = hashlib.sha256(answers[i]["answer"].strip().lower().encode()).hexdigest()
+        if user_answer_hash != row["answer_hash"]:
+            db.close()
+            raise HTTPException(403, "密保问题答案错误")
+
+    db.execute(
+        "UPDATE users SET password_hash=%s WHERE username=%s",
+        (hash_password(new_password), username)
+    )
+    db.commit()
+    db.close()
+    return {"ok": True}
+
+
+
 @app.get("/api/me")
 async def me(request: Request):
     user = get_current_user(request)
@@ -455,6 +612,17 @@ async def chat(request: Request):
 
     db = get_db()
 
+    import os as _os
+    _max_turns = int(_os.environ.get("MAX_TURNS", "50"))
+
+    # 检查用量限制（total_turns 不随删对话减少，确保历史全量计入）
+    _user_turns = db.execute(
+        "SELECT total_turns FROM users WHERE id=%s", (user["id"],)
+    ).fetchone()
+    if _user_turns and _user_turns["total_turns"] >= _max_turns:
+        db.close()
+        raise HTTPException(403, f"免费体验已达上限（{_max_turns} 轮），联系作者 roc9233 解锁")
+
     # 验证对话属于用户，或自动创建新对话
     if conv_id:
         conv = db.execute("SELECT id, title FROM conversations WHERE id=%s AND user_id=%s", (conv_id, user["id"])).fetchone()
@@ -501,9 +669,9 @@ async def chat(request: Request):
                 yield f"data: {data}\n\n"
             yield "data: [DONE]\n\n"
 
-            # 保存 assistant 回复
+            # 保存 assistant 回复（同时累计轮数）
             if full_response:
-                _save_message(conv_id, "assistant", full_response, {"role": "assistant", "content": full_response})
+                _save_message(conv_id, "assistant", full_response, {"role": "assistant", "content": full_response}, user["id"])
                 _update_conv_time(conv_id)
         except Exception as e:
             yield f"data: {json.dumps({'type': 'error', 'content': str(e)}, ensure_ascii=False)}\n\n"
@@ -1242,6 +1410,28 @@ body {
 /* Sidebar toggle on desktop */
 .sidebar.collapsed { display:none; }
 .chat-layout.sidebar-collapsed .chat-main { max-width:100%; }
+.auth-card .sq-section { margin-top:16px; padding-top:16px; border-top:1px solid var(--border-light); }
+.auth-card .sq-section .sq-title { font-size:13px; color:var(--ink-light); margin-bottom:10px; font-weight:500; }
+.auth-card .sq-row { margin-bottom:10px; }
+.auth-card .sq-row select { width:100%; padding:8px 10px; border:1px solid var(--border); border-radius:8px; font-size:13px; font-family:inherit; outline:none; background:var(--bg); color:var(--ink); appearance:auto; }
+.auth-card .sq-row select:focus { border-color:var(--accent); background:#fff; }
+.auth-card .sq-row input { margin-top:6px; }
+.auth-card .sq-step { display:none; }
+.auth-card .sq-step.active { display:block; }
+.auth-card .sq-btns { display:flex; gap:8px; margin-top:4px; }
+.auth-card .sq-btns button { flex:1; padding:8px; border-radius:8px; font-size:13px; font-family:inherit; cursor:pointer; transition:all 0.15s; }
+.auth-card .sq-btns .sq-prev { background:var(--bg); color:var(--ink-light); border:1px solid var(--border); }
+.auth-card .sq-btns .sq-prev:hover { border-color:var(--ink-lighter); }
+.auth-card .sq-btns .sq-next { background:var(--accent); color:#fff; border:none; }
+.auth-card .sq-btns .sq-next:hover { background:#a37d4a; }
+.auth-card .sq-register-btn { width:100%; padding:10px; background:var(--ink); color:#fff; border:none; border-radius:8px; font-size:14px; cursor:pointer; margin-top:4px; transition:background 0.15s; font-family:inherit; }
+.auth-card .sq-register-btn:hover { background:#555; }
+.auth-forgot { text-align:right; font-size:12px; margin-top:-8px; margin-bottom:8px; }
+.auth-forgot a { color:var(--ink-lighter); cursor:pointer; text-decoration:none; }
+.auth-forgot a:hover { color:var(--accent); }
+.auth-card .fp-section { display:none; }
+.auth-card .fp-section.active { display:block; }
+.auth-card .fp-status { font-size:13px; color:var(--ink-light); margin:8px 0; text-align:center; }
 @keyframes toolPulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:0.6;transform:scale(0.85)} }
 
 /* ── Landing page (未登录) ── */
@@ -1502,6 +1692,54 @@ body {
   from { opacity: 0; transform: translateY(20px) scale(0.97); }
   to { opacity: 1; transform: translateY(0) scale(1); }
 }
+
+/* ── 新用户引导 ── */
+.onboarding-overlay {
+  position: fixed; inset: 0; z-index: 2000;
+  background: rgba(0,0,0,0.5); backdrop-filter: blur(4px);
+  display: none; align-items: center; justify-content: center;
+  animation: fadeIn 0.3s ease;
+}
+.onboarding-overlay.open { display: flex; }
+.onboarding-card {
+  background: var(--bg,#fff); border-radius: 20px;
+  padding: 40px 36px; width: 400px; max-width: 90vw;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.15);
+  animation: authSlideIn 0.35s ease;
+}
+.ob-step { display: none; text-align: center; }
+.ob-step.active { display: block; }
+.ob-icon { font-size: 48px; margin-bottom: 12px; }
+.ob-step h2 { font-size: 22px; font-weight: 700; color: var(--ink,#222); margin: 0 0 4px; }
+.ob-sub { font-size: 14px; color: var(--ink-lighter,#999); margin: 0 0 24px; }
+.ob-step input {
+  width: 100%; padding: 12px 16px; font-size: 16px;
+  border: 1.5px solid var(--border,#ddd); border-radius: 10px;
+  outline: none; transition: border-color 0.2s; box-sizing: border-box;
+}
+.ob-step input:focus { border-color: var(--accent,#8b7355); }
+.ob-btn {
+  display: block; width: 100%; margin-top: 16px;
+  padding: 12px; font-size: 15px; font-weight: 600;
+  background: var(--ink,#222); color: #fff; border: none;
+  border-radius: 10px; cursor: pointer; transition: opacity 0.2s;
+}
+.ob-btn:hover { opacity: 0.85; }
+.ob-skip {
+  display: inline-block; margin-top: 12px;
+  font-size: 13px; color: var(--ink-lighter,#999);
+  background: none; border: none; cursor: pointer;
+}
+.ob-skip:hover { color: var(--ink,#222); }
+.ob-dims { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px; }
+.ob-dims button {
+  padding: 12px 8px; font-size: 14px; border: 1.5px solid var(--border,#ddd);
+  border-radius: 10px; background: var(--bg,#fff); cursor: pointer;
+  transition: all 0.2s; font-weight: 500;
+}
+.ob-dims button:hover { border-color: var(--accent,#8b7355); background: var(--accent-bg,#f5f0e8); }
+.ob-dims button.selected { border-color: var(--accent,#8b7355); background: var(--accent,#8b7355); color: #fff; }
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
 </style>
 </head>
 <body>
@@ -1579,6 +1817,44 @@ body {
   </div>
 </div>
 
+<!-- ── 新用户引导 ── -->
+<div class="onboarding-overlay" id="onboardingOverlay">
+  <div class="onboarding-card">
+    <div class="ob-step active" data-step="1">
+      <div class="ob-icon">👋</div>
+      <h2>欢迎加入诸葛策</h2>
+      <p class="ob-sub">先简单认识一下你</p>
+      <input type="text" id="obName" placeholder="你叫什么名字？" maxlength="20" autofocus>
+      <button class="ob-btn" id="obNext1">下一步</button>
+    </div>
+    <div class="ob-step" data-step="2">
+      <div class="ob-icon">📍</div>
+      <h2>你在哪个城市？</h2>
+      <p class="ob-sub">让我知道你的时区，方便以后问候</p>
+      <input type="text" id="obCity" placeholder="城市" maxlength="20">
+      <button class="ob-btn" id="obNext2">下一步</button>
+      <button class="ob-skip" id="obSkip2">跳过</button>
+    </div>
+    <div class="ob-step" data-step="3">
+      <div class="ob-icon">🎯</div>
+      <h2>你最关注什么？</h2>
+      <p class="ob-sub">选一个方向，以后随时可以调整</p>
+      <div class="ob-dims" id="obDims">
+        <button data-d="职场">💼 职场</button>
+        <button data-d="创业">🚀 创业</button>
+        <button data-d="财务">💰 财务</button>
+        <button data-d="学习">📚 学习</button>
+        <button data-d="健康">🏥 健康</button>
+        <button data-d="家庭">👨‍👩‍👧‍👦 家庭</button>
+        <button data-d="社交">🤝 社交</button>
+        <button data-d="精神">🧘 精神</button>
+      </div>
+      <button class="ob-btn ob-start" id="obStart">开始使用</button>
+      <button class="ob-skip" id="obSkip3">跳过</button>
+    </div>
+  </div>
+</div>
+
 <!-- ── App ── -->
 <div class="app" id="app">
   <div class="top-bar">
@@ -1637,6 +1913,20 @@ function restoreInput() {
 
 // ── Auth ──
 let authMode = 'login';
+const SECURITY_QUESTIONS = [
+  "你的小学名称是什么？",
+  "你的初中名称是什么？",
+  "你的高中名称是什么？",
+  "你最喜欢的电影是什么？",
+  "你最喜欢的书籍是什么？",
+  "你最喜欢的动物是什么？",
+  "你的出生城市是哪里？",
+  "你母亲的姓氏是什么？",
+  "你父亲的姓氏是什么？",
+  "你的第一位班主任名字是什么？",
+  "你最喜欢的食物是什么？",
+  "你最想去旅游的国家是哪里？",
+];
 
 function openAuth(mode) {
   authMode = mode || 'login';
@@ -1694,6 +1984,27 @@ $('authToggle').onclick = () => {
   $('authErr').style.display = 'none';
 };
 
+// 实时检测用户名是否可用
+let _usernameTimer = null;
+$('authUser').oninput = () => {
+  clearTimeout(_usernameTimer);
+  const u = $('authUser').value.trim();
+  const tip = $('authErr');
+  if (u.length < 2) { tip.style.display = 'none'; return; }
+  _usernameTimer = setTimeout(async () => {
+    const r = await (await fetch('/api/check-username?username=' + encodeURIComponent(u))).json();
+    if (r.available) {
+      tip.textContent = '✓ 用户名可用';
+      tip.style.color = 'var(--accent,#8b7355)';
+      tip.style.display = 'block';
+    } else {
+      tip.textContent = '✕ 用户名已被注册';
+      tip.style.color = '#b33';
+      tip.style.display = 'block';
+    }
+  }, 300);
+};
+
 $('authBtn').onclick = async () => {
   const u = $('authUser').value.trim();
   const p = $('authPass').value.trim();
@@ -1711,22 +2022,90 @@ $('authBtn').onclick = async () => {
     return;
   }
   overlay.classList.remove('open');
-  initApp();
+  if (authMode === 'register') {
+    // 新用户 → 引导流程
+    document.getElementById('onboardingOverlay').classList.add('open');
+  } else {
+    initApp();
+  }
 };
 
 // Enter to submit auth forms
-$('authPass').onkeydown = e => { if (e.key === 'Enter') $('authBtn').click(); };
+$('authPass').onkeydown = e => { if (e.key === 'Enter' && authMode === 'login') $('authBtn').click(); };
 $('authUser').onkeydown = e => { if (e.key === 'Enter') $('authPass').focus(); };
 
+// ── 新用户引导流程 ──
+const obOverlay = document.getElementById('onboardingOverlay');
+let obData = {};
+
+function showObStep(n) {
+  document.querySelectorAll('.ob-step').forEach(el => el.classList.remove('active'));
+  document.querySelector('.ob-step[data-step="'+n+'"]').classList.add('active');
+}
+
+$('obNext1').onclick = () => {
+  const name = $('obName').value.trim();
+  if (!name) { $('obName').style.borderColor = '#b33'; return; }
+  obData.name = name;
+  showObStep(2);
+  setTimeout(() => $('obCity').focus(), 200);
+};
+$('obName').onkeydown = e => { if (e.key === 'Enter') $('obNext1').click(); };
+$('obName').oninput = () => $('obName').style.borderColor = '';
+
+$('obNext2').onclick = () => {
+  obData.city = $('obCity').value.trim();
+  showObStep(3);
+};
+$('obSkip2').onclick = () => { obData.city = ''; showObStep(3); };
+$('obCity').onkeydown = e => { if (e.key === 'Enter') $('obNext2').click(); };
+
+// 维度选择
+$('obDims').querySelectorAll('button').forEach(btn => {
+  btn.onclick = () => {
+    document.querySelectorAll('.ob-dims button').forEach(b => b.classList.remove('selected'));
+    btn.classList.add('selected');
+    obData.focus = btn.dataset.d;
+  };
+});
+
+async function finishOnboarding() {
+  $('obStart').disabled = true;
+  $('obStart').textContent = '加载中…';
+  try {
+    const resp = await fetch('/api/onboard', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(obData),
+    });
+    if (!resp.ok) throw new Error('onboard failed');
+    const data = await resp.json();
+    obOverlay.classList.remove('open');
+    await initApp(data.conv_id, data.welcome);
+  } catch(e) {
+    obOverlay.classList.remove('open');
+    initApp();
+  }
+}
+$('obStart').onclick = finishOnboarding;
+$('obSkip3').onclick = () => { obData.focus = ''; finishOnboarding(); };
+
 // ── App Init ──
-async function initApp() {
+async function initApp(convId, welcomeMsg) {
   $('landingPage').style.display = 'none';
   overlay.classList.remove('open');
   $('app').classList.add('visible');
   const me = await (await fetch('/api/me')).json();
   $('userName').textContent = me.username;
   await loadConvs();
-  if (convs.length > 0) {
+  if (convId && welcomeMsg) {
+    // 新用户引导完成，显示欢迎消息
+    currentConvId = convId;
+    msgEl.innerHTML = '';
+    msgEl.querySelector('.welcome')?.remove();
+    addMessage('assistant', marked.parse(welcomeMsg).replace(/<a\s+href=/g, '<a target="_blank" href='));
+    requestAnimationFrame(() => msgEl.scrollTop = msgEl.scrollHeight);
+    renderConvList();
+  } else if (convs.length > 0) {
     await selectConv(convs[0].id);
   } else {
     showWelcome(me.username);
@@ -1996,7 +2375,13 @@ async function send() {
       body: JSON.stringify({message: text, conversation_id: currentConvId}),
       signal: abortController.signal,
     });
-    if (!resp.ok) throw new Error('请求失败');
+    if (!resp.ok) {
+      if (resp.status === 403) {
+        const errData = await resp.json();
+        throw new Error('QUOTA_EXCEEDED:' + (errData.detail || '免费体验已达上限'));
+      }
+      throw new Error('请求失败');
+    }
     const reader = resp.body.getReader();
     const decoder = new TextDecoder();
     while (true) {
@@ -2038,7 +2423,19 @@ async function send() {
         msgDiv.innerHTML = '<p style="color:var(--ink-lighter);font-style:italic;font-size:13px;">⏸️ 已停止</p>';
       }
     } else {
-      msgDiv.innerHTML = '<p style="color:#b33;">连接失败，请确认服务器正在运行</p>';
+      if (e.message && e.message.startsWith('QUOTA_EXCEEDED:')) {
+        const detail = e.message.slice('QUOTA_EXCEEDED:'.length);
+        msgDiv.innerHTML = '<div style="text-align:center;padding:24px 16px;color:var(--ink-lighter);">'
+          + '<svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="opacity:0.4;margin-bottom:8px;"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>'
+          + '<p style="font-size:15px;margin:4px 0;">' + escapeHtml(detail) + '</p>'
+          + '<p style="font-size:12px;margin:4px 0;">如需继续使用，请联系作者</p>'
+          + '</div>';
+        // 永久禁用输入
+        inputEl.disabled = true;
+        sendBtn.disabled = true;
+      } else {
+        msgDiv.innerHTML = '<p style="color:#b33;">连接失败，请确认服务器正在运行</p>';
+      }
     }
   }
 

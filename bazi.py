@@ -234,4 +234,49 @@ def calculate_bazi(birth_year: int, birth_month: int, birth_day: int,
         "ri_zhu_element": ri_zhu_wx,
         "wu_xing": wx_analysis,
         "pillar_count": len(pillars),
+        "dayun": calculate_dayun(y_gan, m_gan, m_zhi, gender),
+    }
+
+
+# ── 大运计算 ──
+
+def calculate_dayun(year_gan: int, month_gan: int, month_zhi: int, gender: str = None) -> dict:
+    """计算大运序列（简化版，起运岁数按近似值）
+
+    year_gan: 年柱天干索引
+    month_gan: 月柱天干索引
+    month_zhi: 月柱地支索引
+    gender: "male" 或 "female"
+
+    阳年（甲丙戊庚壬 = 偶数索引）：男顺女逆
+    阴年（乙丁己辛癸 = 奇数索引）：男逆女顺
+    大运天干顺排：甲→乙→丙→丁→… 逆排：甲→癸→壬→辛→…
+    大运地支顺排：寅→卯→辰→巳→… 逆排：寅→丑→子→亥→…
+    """
+    is_yang = year_gan % 2 == 0  # 阳干
+    is_male = gender == "male"
+
+    # 阳男阴女 → 顺排；阴男阳女 → 逆排
+    forward = (is_yang and is_male) or (not is_yang and not is_male)
+
+    dayun_list = []
+    for i in range(8):  # 8 步大运，80 年
+        if forward:
+            zhi = (month_zhi + 1 + i) % 12
+            gan = (month_gan + 1 + i) % 10
+        else:
+            zhi = (month_zhi - 1 - i) % 12
+            gan = (month_gan - 1 - i) % 10
+        dayun_list.append({
+            "index": i + 1,
+            "pillar": TIAN_GAN[gan] + DI_ZHI[zhi],
+            "tian_gan": TIAN_GAN[gan],
+            "di_zhi": DI_ZHI[zhi],
+        })
+
+    return {
+        "direction": "顺排" if forward else "逆排",
+        "reason": "阳男阴女顺排，阴男阳女逆排",
+        "start_age_note": "起运岁数需结合节气精确计算，仅供参考。可按每3天=1岁估算，或请专业命理师核定。",
+        "list": dayun_list,
     }
