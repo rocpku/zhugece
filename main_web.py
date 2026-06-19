@@ -5,7 +5,6 @@ import json
 import os
 import sys
 import io
-import sqlite3
 import secrets
 import hashlib
 from pathlib import Path
@@ -29,61 +28,80 @@ from agent import MingYuanAgent
 
 # ── 数据库 ──
 
-DATA_DIR = Path(__file__).parent / "data"
-DATA_DIR.mkdir(parents=True, exist_ok=True)
-DB_PATH = DATA_DIR / "web.db"
+import pymysql
 
+class _DB:
+    """包装 pymysql 连接，提供 sqlite3 兼容的 execute() 接口"""
+    def __init__(self, conn):
+        self.conn = conn
+    def execute(self, sql, params=None):
+        cur = self.conn.cursor()
+        cur.execute(sql, params or ())
+        return cur
+    def commit(self):
+        self.conn.commit()
+    def close(self):
+        self.conn.close()
 
 def get_db():
-    db = sqlite3.connect(str(DB_PATH))
-    db.row_factory = sqlite3.Row
-    db.execute("PRAGMA journal_mode=WAL")
-    db.execute("PRAGMA foreign_keys=ON")
-    return db
+    conn = pymysql.connect(
+        host=os.getenv("MYSQL_HOST", "127.0.0.1"),
+        port=int(os.getenv("MYSQL_PORT", "3306")),
+        user=os.getenv("MYSQL_USER", "root"),
+        password=os.getenv("MYSQL_PASSWORD", "root"),
+        database=os.getenv("MYSQL_DATABASE", "zhugece"),
+        cursorclass=pymysql.cursors.DictCursor,
+        charset="utf8mb4",
+        autocommit=False,
+    )
+    return _DB(conn)
 
 
 def init_db():
     db = get_db()
-    db.executescript("""
+    db.execute("""
         CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            username TEXT UNIQUE NOT NULL,
-            password_hash TEXT,
-            wechat_openid TEXT UNIQUE,
-            created_at TEXT NOT NULL
-        );
-        CREATE TABLE IF NOT EXISTS sessions (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER NOT NULL REFERENCES users(id),
-            token TEXT UNIQUE NOT NULL,
-            created_at TEXT NOT NULL
-        );
-        CREATE TABLE IF NOT EXISTS conversations (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER NOT NULL REFERENCES users(id),
-            title TEXT NOT NULL DEFAULT '新对话',
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
-        );
-        CREATE TABLE IF NOT EXISTS messages (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            conversation_id INTEGER NOT NULL REFERENCES conversations(id),
-            role TEXT NOT NULL,
-            content TEXT,
-            msg_json TEXT NOT NULL,
-            created_at TEXT NOT NULL
-        );
-        CREATE INDEX IF NOT EXISTS idx_sessions_token ON sessions(token);
-        CREATE INDEX IF NOT EXISTS idx_conversations_user ON conversations(user_id);
-        CREATE INDEX IF NOT EXISTS idx_messages_conv ON messages(conversation_id);
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            username VARCHAR(255) UNIQUE NOT NULL,
+            password_hash VARCHAR(255),
+            wechat_openid VARCHAR(255) UNIQUE,
+            created_at VARCHAR(50) NOT NULL
+        )
     """)
-    # 兼容已有数据库：新增列（不能带 UNIQUE 约束，否则已有数据会报错）
-    cols = [row["name"] for row in db.execute("PRAGMA table_info(users)").fetchall()]
-    if "wechat_openid" not in cols:
-        db.execute("ALTER TABLE users ADD COLUMN wechat_openid TEXT")
-        db.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_wechat_openid ON users(wechat_openid)")
-    if "password_hash" not in cols:
-        db.execute("ALTER TABLE users ADD COLUMN password_hash TEXT")
+    db.execute("""
+        CREATE TABLE IF NOT EXISTS sessions (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            user_id INT NOT NULL,
+            token VARCHAR(255) UNIQUE NOT NULL,
+            created_at VARCHAR(50) NOT NULL
+        )
+    """)
+    db.execute("""
+        CREATE TABLE IF NOT EXISTS conversations (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            user_id INT NOT NULL,
+            title VARCHAR(255) NOT NULL DEFAULT '新对话',
+            created_at VARCHAR(50) NOT NULL,
+            updated_at VARCHAR(50) NOT NULL
+        )
+    """)
+    db.execute("""
+        CREATE TABLE IF NOT EXISTS messages (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            conversation_id INT NOT NULL,
+            role VARCHAR(50) NOT NULL,
+            content LONGTEXT,
+            msg_json LONGTEXT NOT NULL,
+            created_at VARCHAR(50) NOT NULL
+        )
+    """)
+    for idx_def in ["idx_sessions_token ON sessions(token)",
+                     "idx_conversations_user ON conversations(user_id)",
+                     "idx_messages_conv ON messages(conversation_id)"]:
+        try:
+            db.execute(f"CREATE INDEX {idx_def}")
+        except Exception:
+            pass  # 索引已存在则跳过
     db.commit()
     db.close()
 
@@ -110,7 +128,7 @@ def get_agent_for_conv(user_id: int, conv_id: int) -> MingYuanAgent:
 def _restore_messages(agent: MingYuanAgent, conv_id: int):
     db = get_db()
     rows = db.execute(
-        "SELECT msg_json FROM messages WHERE conversation_id=? ORDER BY id",
+        "SELECT msg_json FROM messages WHERE conversation_id=%s ORDER BY id",
         (conv_id,)
     ).fetchall()
     db.close()
@@ -123,7 +141,7 @@ def _restore_messages(agent: MingYuanAgent, conv_id: int):
 def _save_message(conv_id: int, role: str, content, msg_dict: dict):
     db = get_db()
     db.execute(
-        "INSERT INTO messages (conversation_id, role, content, msg_json, created_at) VALUES (?,?,?,?,?)",
+        "INSERT INTO messages (conversation_id, role, content, msg_json, created_at) VALUES (%s,%s,%s,%s,%s)",
         (conv_id, role, content or "", json.dumps(msg_dict, ensure_ascii=False), datetime.now().isoformat())
     )
     db.commit()
@@ -132,7 +150,7 @@ def _save_message(conv_id: int, role: str, content, msg_dict: dict):
 
 def _update_conv_time(conv_id: int):
     db = get_db()
-    db.execute("UPDATE conversations SET updated_at=? WHERE id=?", (datetime.now().isoformat(), conv_id))
+    db.execute("UPDATE conversations SET updated_at=%s WHERE id=%s", (datetime.now().isoformat(), conv_id))
     db.commit()
     db.close()
 
@@ -172,7 +190,7 @@ def create_session(response: Optional[Response], user_id: int) -> str:
     token = secrets.token_hex(32)
     db = get_db()
     db.execute(
-        "INSERT INTO sessions (user_id, token, created_at) VALUES (?,?,?)",
+        "INSERT INTO sessions (user_id, token, created_at) VALUES (%s,%s,%s)",
         (user_id, token, datetime.now().isoformat())
     )
     db.commit()
@@ -199,7 +217,7 @@ def get_current_user(request: Request) -> Optional[dict]:
         return None
     db = get_db()
     row = db.execute(
-        "SELECT u.id, u.username FROM sessions s JOIN users u ON s.user_id=u.id WHERE s.token=?",
+        "SELECT u.id, u.username FROM sessions s JOIN users u ON s.user_id=u.id WHERE s.token=%s",
         (token,)
     ).fetchone()
     db.close()
@@ -226,16 +244,16 @@ async def register(request: Request):
         raise HTTPException(400, "用户名至少2字符，密码至少4字符")
 
     db = get_db()
-    existing = db.execute("SELECT id FROM users WHERE username=?", (username,)).fetchone()
+    existing = db.execute("SELECT id FROM users WHERE username=%s", (username,)).fetchone()
     if existing:
         db.close()
         raise HTTPException(400, "用户名已存在")
     db.execute(
-        "INSERT INTO users (username, password_hash, created_at) VALUES (?,?,?)",
+        "INSERT INTO users (username, password_hash, created_at) VALUES (%s,%s,%s)",
         (username, hash_password(password), datetime.now().isoformat())
     )
     db.commit()
-    user_id = db.execute("SELECT id FROM users WHERE username=?", (username,)).fetchone()["id"]
+    user_id = db.execute("SELECT id FROM users WHERE username=%s", (username,)).fetchone()["id"]
     db.close()
 
     resp = Response(json.dumps({"ok": True}, ensure_ascii=False), media_type="application/json")
@@ -251,7 +269,7 @@ async def login(request: Request):
 
     db = get_db()
     row = db.execute(
-        "SELECT id, username FROM users WHERE username=? AND password_hash=?",
+        "SELECT id, username FROM users WHERE username=%s AND password_hash=%s",
         (username, hash_password(password))
     ).fetchone()
     db.close()
@@ -301,7 +319,7 @@ async def wx_login(request: Request):
     db = get_db()
 
     # 查找已有用户
-    row = db.execute("SELECT id, username FROM users WHERE wechat_openid=?", (openid,)).fetchone()
+    row = db.execute("SELECT id, username FROM users WHERE wechat_openid=%s", (openid,)).fetchone()
     is_new = False
     if row:
         user_id = row["id"]
@@ -311,7 +329,7 @@ async def wx_login(request: Request):
         username = f"{_DEFAULT_USER_PREFIX}{openid[-8:]}"
         now = datetime.now().isoformat()
         cur = db.execute(
-            "INSERT INTO users (username, password_hash, wechat_openid, created_at) VALUES (?,?,?,?)",
+            "INSERT INTO users (username, password_hash, wechat_openid, created_at) VALUES (%s,%s,%s,%s)",
             (username, "", openid, now)
         )
         db.commit()
@@ -336,12 +354,12 @@ async def dev_login(request: Request):
 
     now = datetime.now().isoformat()
     db = get_db()
-    row = db.execute("SELECT id FROM users WHERE username=?", (username,)).fetchone()
+    row = db.execute("SELECT id FROM users WHERE username=%s", (username,)).fetchone()
     if row:
         user_id = row["id"]
     else:
         cur = db.execute(
-            "INSERT INTO users (username, password_hash, created_at) VALUES (?,?,?)",
+            "INSERT INTO users (username, password_hash, created_at) VALUES (%s,%s,%s)",
             (username, "", now)
         )
         db.commit()
@@ -367,7 +385,7 @@ async def list_conversations(request: Request):
     user = require_user(request)
     db = get_db()
     rows = db.execute(
-        "SELECT id, title, created_at, updated_at FROM conversations WHERE user_id=? ORDER BY updated_at DESC",
+        "SELECT id, title, created_at, updated_at FROM conversations WHERE user_id=%s ORDER BY updated_at DESC",
         (user["id"],)
     ).fetchall()
     db.close()
@@ -380,7 +398,7 @@ async def create_conversation(request: Request):
     now = datetime.now().isoformat()
     db = get_db()
     cur = db.execute(
-        "INSERT INTO conversations (user_id, title, created_at, updated_at) VALUES (?,?,?,?)",
+        "INSERT INTO conversations (user_id, title, created_at, updated_at) VALUES (%s,%s,%s,%s)",
         (user["id"], "新对话", now, now)
     )
     db.commit()
@@ -393,12 +411,12 @@ async def create_conversation(request: Request):
 async def delete_conversation(conv_id: int, request: Request):
     user = require_user(request)
     db = get_db()
-    conv = db.execute("SELECT id FROM conversations WHERE id=? AND user_id=?", (conv_id, user["id"])).fetchone()
+    conv = db.execute("SELECT id FROM conversations WHERE id=%s AND user_id=%s", (conv_id, user["id"])).fetchone()
     if not conv:
         db.close()
         raise HTTPException(404, "对话不存在")
-    db.execute("DELETE FROM messages WHERE conversation_id=?", (conv_id,))
-    db.execute("DELETE FROM conversations WHERE id=?", (conv_id,))
+    db.execute("DELETE FROM messages WHERE conversation_id=%s", (conv_id,))
+    db.execute("DELETE FROM conversations WHERE id=%s", (conv_id,))
     db.commit()
     db.close()
     # 清除内存中的 agent
@@ -411,12 +429,12 @@ async def conversation_history(conv_id: int, request: Request):
     user = require_user(request)
     # 验证属于当前用户
     db = get_db()
-    conv = db.execute("SELECT id FROM conversations WHERE id=? AND user_id=?", (conv_id, user["id"])).fetchone()
+    conv = db.execute("SELECT id FROM conversations WHERE id=%s AND user_id=%s", (conv_id, user["id"])).fetchone()
     if not conv:
         db.close()
         raise HTTPException(404, "对话不存在")
     rows = db.execute(
-        "SELECT role, content FROM messages WHERE conversation_id=? AND role IN ('user','assistant') AND content != '' ORDER BY id",
+        "SELECT role, content FROM messages WHERE conversation_id=%s AND role IN ('user','assistant') AND content != '' ORDER BY id",
         (conv_id,)
     ).fetchall()
     db.close()
@@ -442,7 +460,7 @@ async def chat(request: Request):
 
     # 验证对话属于用户，或自动创建新对话
     if conv_id:
-        conv = db.execute("SELECT id, title FROM conversations WHERE id=? AND user_id=?", (conv_id, user["id"])).fetchone()
+        conv = db.execute("SELECT id, title FROM conversations WHERE id=%s AND user_id=%s", (conv_id, user["id"])).fetchone()
         if not conv:
             db.close()
             raise HTTPException(404, "对话不存在")
@@ -450,14 +468,14 @@ async def chat(request: Request):
         if conv["title"] == "新对话":
             title = user_message[:30].strip()
             if len(title) > 0:
-                db.execute("UPDATE conversations SET title=? WHERE id=?", (title, conv_id))
+                db.execute("UPDATE conversations SET title=%s WHERE id=%s", (title, conv_id))
                 db.commit()
     else:
         # 自动创建新对话
         now = datetime.now().isoformat()
         title = user_message[:30].strip() or "新对话"
         cur = db.execute(
-            "INSERT INTO conversations (user_id, title, created_at, updated_at) VALUES (?,?,?,?)",
+            "INSERT INTO conversations (user_id, title, created_at, updated_at) VALUES (%s,%s,%s,%s)",
             (user["id"], title, now, now)
         )
         db.commit()
@@ -519,20 +537,20 @@ async def send_message(request: Request):
     db = get_db()
 
     if conv_id:
-        conv = db.execute("SELECT id, title FROM conversations WHERE id=? AND user_id=?", (conv_id, user["id"])).fetchone()
+        conv = db.execute("SELECT id, title FROM conversations WHERE id=%s AND user_id=%s", (conv_id, user["id"])).fetchone()
         if not conv:
             db.close()
             raise HTTPException(404, "对话不存在")
         if conv["title"] == "新对话":
             title = user_message[:30].strip()
             if len(title) > 0:
-                db.execute("UPDATE conversations SET title=? WHERE id=?", (title, conv_id))
+                db.execute("UPDATE conversations SET title=%s WHERE id=%s", (title, conv_id))
                 db.commit()
     else:
         now = datetime.now().isoformat()
         title = user_message[:30].strip() or "新对话"
         cur = db.execute(
-            "INSERT INTO conversations (user_id, title, created_at, updated_at) VALUES (?,?,?,?)",
+            "INSERT INTO conversations (user_id, title, created_at, updated_at) VALUES (%s,%s,%s,%s)",
             (user["id"], title, now, now)
         )
         db.commit()
@@ -567,14 +585,14 @@ async def send_message(request: Request):
 async def rewind_conversation(conv_id: int, request: Request):
     user = require_user(request)
     db = get_db()
-    conv = db.execute("SELECT id FROM conversations WHERE id=? AND user_id=?", (conv_id, user["id"])).fetchone()
+    conv = db.execute("SELECT id FROM conversations WHERE id=%s AND user_id=%s", (conv_id, user["id"])).fetchone()
     if not conv:
         db.close()
         raise HTTPException(404, "对话不存在")
 
     # 找到最后一条 user 消息的 id
     last_user = db.execute(
-        "SELECT id FROM messages WHERE conversation_id=? AND role='user' ORDER BY id DESC LIMIT 1",
+        "SELECT id FROM messages WHERE conversation_id=%s AND role='user' ORDER BY id DESC LIMIT 1",
         (conv_id,)
     ).fetchone()
     if not last_user:
@@ -583,7 +601,7 @@ async def rewind_conversation(conv_id: int, request: Request):
 
     # 删除该 user 消息及之后的所有消息
     deleted = db.execute(
-        "DELETE FROM messages WHERE conversation_id=? AND id >= ?",
+        "DELETE FROM messages WHERE conversation_id=%s AND id >= %s",
         (conv_id, last_user["id"])
     ).rowcount
     db.commit()
@@ -633,6 +651,14 @@ HTML = r"""<!DOCTYPE html>
   --shadow: rgba(58,53,48,0.06);
   --font-heading: "Noto Serif SC", "Songti SC", serif;
   --font-body: "Noto Sans SC", -apple-system, sans-serif;
+  /* 登录专属 */
+  --login-accent: #4a4240;
+  --login-border: #d4cbc2;
+  --login-bg: #f2efea;
+  /* 注册专属 */
+  --register-accent: #c8954e;
+  --register-glow: rgba(200,149,78,0.12);
+  --register-bg: #fcf7f0;
 }
 * { margin:0; padding:0; box-sizing:border-box; }
 html, body { height:100%; }
@@ -718,15 +744,110 @@ body {
 }
 .auth-card .seal {
   width: 48px; height: 48px;
-  border: 2px solid var(--accent);
   border-radius: 50%;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   font-family: var(--font-heading);
   font-size: 20px;
-  color: var(--accent);
   margin-bottom: 16px;
+  transition: all 0.4s ease;
+}
+
+/* ── Login 沉稳雅致 ── */
+.auth-card.login-mode .seal {
+  border: 2px solid var(--login-accent);
+  color: var(--login-accent);
+  background: transparent;
+}
+.auth-card.login-mode {
+  background: var(--bg);
+  border-color: var(--login-border);
+  box-shadow: 0 2px 16px rgba(58,53,48,0.04);
+}
+.auth-card.login-mode input {
+  background: #fff;
+  border-color: var(--login-border);
+}
+.auth-card.login-mode input:focus {
+  border-color: var(--login-accent);
+  box-shadow: 0 0 0 3px rgba(74,66,64,0.06);
+}
+.auth-card.login-mode button {
+  background: var(--login-accent);
+  letter-spacing: 0.15em;
+  font-weight: 400;
+}
+.auth-card.login-mode button:hover {
+  background: #35302e;
+}
+.auth-card.login-mode h1 {
+  letter-spacing: 0.2em;
+  color: var(--login-accent);
+}
+
+/* ── Register 温暖新生 ── */
+.auth-card.register-mode .seal {
+  border: 2px solid var(--register-accent);
+  color: #fff;
+  background: linear-gradient(135deg, var(--register-accent), #dba35e);
+  box-shadow: 0 4px 16px var(--register-glow);
+}
+.auth-card.register-mode {
+  background: var(--register-bg);
+  border-color: #e8d5b8;
+  box-shadow: 0 4px 32px rgba(200,149,78,0.08);
+}
+.auth-card.register-mode::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 3px;
+  background: linear-gradient(90deg, var(--register-accent), #e8c48a, var(--register-accent));
+  border-radius: 16px 16px 0 0;
+}
+.auth-card.register-mode {
+  position: relative;
+  overflow: hidden;
+}
+.auth-card.register-mode input {
+  background: #fff;
+  border-color: #e8d5b8;
+}
+.auth-card.register-mode input:focus {
+  border-color: var(--register-accent);
+  background: #fffefc;
+  box-shadow: 0 0 0 3px var(--register-glow);
+}
+.auth-card.register-mode button {
+  background: linear-gradient(135deg, var(--register-accent), #dba35e);
+  letter-spacing: 0.08em;
+  font-weight: 500;
+}
+.auth-card.register-mode button:hover {
+  background: linear-gradient(135deg, #b88342, #cf9249);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px var(--register-glow);
+}
+.auth-card.register-mode button {
+  transition: all 0.25s ease;
+}
+.auth-card.register-mode .sub {
+  color: #b8925a;
+}
+.auth-card.register-mode .toggle {
+  color: var(--register-accent);
+}
+.auth-card.register-mode .toggle:hover {
+  color: #a07940;
+}
+
+/* ── 首页 战情室风格 ── */
+.app.visible {
+  background: var(--bg);
+  background-image:
+    radial-gradient(ellipse at 0% 50%, rgba(184,146,90,0.03) 0%, transparent 50%),
+    radial-gradient(ellipse at 100% 50%, rgba(58,53,48,0.02) 0%, transparent 50%);
 }
 
 /* ── Dashboard layout ── */
@@ -738,7 +859,7 @@ body {
   align-items: center;
   gap: 12px;
   padding: 12px 20px;
-  background: var(--surface);
+  background: linear-gradient(180deg, var(--surface) 0%, #faf8f4 100%);
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
 }
@@ -746,7 +867,23 @@ body {
   font-family: var(--font-heading);
   font-size: 16px;
   font-weight: 600;
-  letter-spacing: 0.1em;
+  letter-spacing: 0.15em;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.top-bar h1::before {
+  content: '策';
+  font-family: var(--font-heading);
+  font-size: 12px;
+  color: var(--accent);
+  background: var(--accent-light);
+  width: 22px; height: 22px;
+  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  letter-spacing: 0;
 }
 .top-bar .user-info {
   margin-left: auto;
@@ -900,8 +1037,140 @@ body {
 .thinking-dots span:nth-child(3) { animation-delay:0.4s; }
 @keyframes dotPulse { 0%,80%,100% { transform:scale(0.6); opacity:0.3; } 40% { transform:scale(1); opacity:0.8; } }
 
-/* Welcome in chat */
-.welcome { text-align:center; margin:60px 20px; }
+/* Welcome / Landing */
+.welcome {
+  max-width: 520px;
+  margin: 40px auto 20px;
+  padding: 0 20px;
+  text-align: center;
+  animation: welcomeFade 0.6s ease;
+}
+@keyframes welcomeFade {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.welcome .hero-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.15em;
+  color: var(--accent);
+  padding: 4px 14px;
+  border: 1px solid var(--accent-light);
+  border-radius: 20px;
+  margin-bottom: 20px;
+  animation: welcomeFade 0.6s ease both;
+  animation-delay: 0.1s;
+}
+.welcome .hero-title {
+  font-family: var(--font-heading);
+  font-size: 28px;
+  font-weight: 700;
+  color: var(--ink);
+  letter-spacing: 0.08em;
+  line-height: 1.3;
+  margin-bottom: 10px;
+  animation: welcomeFade 0.6s ease both;
+  animation-delay: 0.2s;
+}
+.welcome .hero-title em {
+  font-style: normal;
+  color: var(--accent);
+}
+.welcome .hero-desc {
+  font-size: 14px;
+  color: var(--ink-light);
+  line-height: 1.7;
+  letter-spacing: 0.03em;
+  margin-bottom: 32px;
+  animation: welcomeFade 0.6s ease both;
+  animation-delay: 0.3s;
+}
+
+/* Feature cards */
+.welcome .features {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-bottom: 32px;
+  text-align: left;
+  animation: welcomeFade 0.6s ease both;
+  animation-delay: 0.4s;
+}
+.welcome .feature-card {
+  background: var(--surface);
+  border: 1px solid var(--border-light);
+  border-radius: 10px;
+  padding: 14px 14px 14px 16px;
+  cursor: default;
+  transition: all 0.2s ease;
+}
+.welcome .feature-card:hover {
+  border-color: var(--accent-light);
+  box-shadow: 0 2px 12px rgba(184,146,90,0.06);
+  transform: translateY(-2px);
+}
+.welcome .feature-card .fc-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 8px;
+  font-size: 14px;
+}
+.welcome .feature-card .fc-icon svg { width: 16px; height: 16px; }
+.welcome .feature-card .fc-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+  margin-bottom: 3px;
+  letter-spacing: 0.03em;
+}
+.welcome .feature-card .fc-desc {
+  font-size: 12px;
+  color: var(--ink-lighter);
+  line-height: 1.5;
+}
+
+/* Prompt chips */
+.welcome .prompts {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  animation: welcomeFade 0.6s ease both;
+  animation-delay: 0.5s;
+}
+.welcome .prompt-chip {
+  font-size: 12px;
+  color: var(--ink-light);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  padding: 6px 16px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  font-family: inherit;
+}
+.welcome .prompt-chip:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: #fffcf8;
+  box-shadow: 0 1px 8px rgba(184,146,90,0.1);
+}
+.welcome .prompts-label {
+  width: 100%;
+  font-size: 11px;
+  color: var(--ink-lighter);
+  letter-spacing: 0.08em;
+  margin-bottom: 2px;
+  opacity: 0.6;
+}
 
 /* Input area */
 .input-area {
@@ -977,16 +1246,334 @@ body {
 .sidebar.collapsed { display:none; }
 .chat-layout.sidebar-collapsed .chat-main { max-width:100%; }
 @keyframes toolPulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:0.6;transform:scale(0.85)} }
+
+/* ── Landing page (未登录) ── */
+.landing-page {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  padding: 60px 40px;
+  position: relative;
+  overflow: hidden;
+}
+.landing-page::before {
+  content: '策';
+  font-family: var(--font-heading);
+  font-size: 320px;
+  font-weight: 700;
+  color: var(--border-light);
+  position: absolute;
+  right: -40px;
+  bottom: -40px;
+  line-height: 1;
+  opacity: 0.3;
+  pointer-events: none;
+  user-select: none;
+}
+.landing-page::after {
+  content: '';
+  position: absolute;
+  left: 0; top: 0;
+  width: 100%; height: 100%;
+  background: radial-gradient(ellipse at 20% 40%, rgba(184,146,90,0.04) 0%, transparent 50%),
+              radial-gradient(ellipse at 80% 60%, rgba(184,146,90,0.02) 0%, transparent 50%);
+  pointer-events: none;
+}
+.landing-page .lp-inner {
+  width: 100%;
+  max-width: 880px;
+  position: relative;
+  z-index: 1;
+}
+.landing-page .lp-hero {
+  display: flex;
+  align-items: flex-start;
+  gap: 40px;
+  margin-bottom: 48px;
+  text-align: left;
+}
+.landing-page .lp-hero-seal {
+  flex-shrink: 0;
+  width: 80px;
+  height: 80px;
+  border: 2px solid var(--accent);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-heading);
+  font-size: 32px;
+  color: var(--accent);
+  margin-top: 8px;
+  animation: welcomeFade 0.6s ease both;
+  animation-delay: 0.05s;
+}
+.landing-page .lp-hero-text {
+  flex: 1;
+}
+.landing-page .lp-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.15em;
+  color: var(--accent);
+  padding: 4px 14px;
+  border: 1px solid var(--accent-light);
+  border-radius: 20px;
+  margin-bottom: 20px;
+  animation: welcomeFade 0.6s ease both;
+  animation-delay: 0.1s;
+}
+.landing-page .lp-title {
+  font-family: var(--font-heading);
+  font-size: 42px;
+  font-weight: 700;
+  color: var(--ink);
+  letter-spacing: 0.1em;
+  line-height: 1.25;
+  margin-bottom: 12px;
+  animation: welcomeFade 0.6s ease both;
+  animation-delay: 0.15s;
+}
+.landing-page .lp-title em {
+  font-style: normal;
+  color: var(--accent);
+}
+.landing-page .lp-sub {
+  font-size: 15px;
+  color: var(--ink-light);
+  line-height: 1.8;
+  letter-spacing: 0.04em;
+  animation: welcomeFade 0.6s ease both;
+  animation-delay: 0.2s;
+}
+.landing-page .lp-quote {
+  font-family: var(--font-heading);
+  font-size: 13px;
+  color: var(--ink-lighter);
+  letter-spacing: 0.12em;
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border-light);
+  display: inline-block;
+  animation: welcomeFade 0.6s ease both;
+  animation-delay: 0.25s;
+}
+.landing-page .lp-features {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-bottom: 40px;
+  animation: welcomeFade 0.6s ease both;
+  animation-delay: 0.3s;
+}
+.landing-page .lp-feature-card {
+  background: var(--surface);
+  border: 1px solid var(--border-light);
+  border-radius: 14px;
+  padding: 24px 22px;
+  transition: all 0.3s ease;
+  cursor: default;
+}
+.landing-page .lp-feature-card:hover {
+  border-color: var(--accent-light);
+  box-shadow: 0 6px 24px rgba(184,146,90,0.1);
+  transform: translateY(-4px);
+}
+.landing-page .lp-feature-card .lp-fc-top {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+.landing-page .lp-feature-card .lp-fc-icon {
+  width: 36px; height: 36px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.landing-page .lp-feature-card .lp-fc-icon svg { width: 20px; height: 20px; }
+.landing-page .lp-feature-card .lp-fc-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--ink);
+  letter-spacing: 0.04em;
+}
+.landing-page .lp-feature-card .lp-fc-desc {
+  font-size: 13px;
+  color: var(--ink-lighter);
+  line-height: 1.6;
+  padding-left: 48px;
+}
+.landing-page .lp-actions {
+  display: flex;
+  gap: 14px;
+  justify-content: center;
+  animation: welcomeFade 0.6s ease both;
+  animation-delay: 0.4s;
+}
+.landing-page .lp-btn {
+  padding: 12px 36px;
+  border-radius: 10px;
+  font-size: 15px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: all 0.25s ease;
+  letter-spacing: 0.06em;
+}
+.landing-page .lp-btn-primary {
+  background: var(--ink);
+  color: #fff;
+  border: none;
+}
+.landing-page .lp-btn-primary:hover {
+  background: #555;
+  transform: translateY(-2px);
+  box-shadow: 0 4px 16px rgba(58,53,48,0.15);
+}
+.landing-page .lp-btn-secondary {
+  background: transparent;
+  color: var(--ink-light);
+  border: 1px solid var(--border);
+}
+.landing-page .lp-btn-secondary:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--surface);
+  transform: translateY(-2px);
+}
+.landing-page .lp-footer {
+  text-align: center;
+  font-size: 11px;
+  color: var(--ink-lighter);
+  opacity: 0.45;
+  margin-top: 24px;
+  letter-spacing: 0.04em;
+  animation: welcomeFade 0.6s ease both;
+  animation-delay: 0.45s;
+}
+
+@media (max-width: 700px) {
+  .landing-page { padding: 40px 20px; }
+  .landing-page .lp-hero { flex-direction: column; gap: 20px; }
+  .landing-page .lp-hero-seal { width: 56px; height: 56px; font-size: 22px; margin-top: 0; }
+  .landing-page .lp-title { font-size: 28px; }
+  .landing-page .lp-features { gap: 10px; }
+  .landing-page .lp-feature-card { padding: 16px 14px; }
+  .landing-page .lp-feature-card .lp-fc-desc { padding-left: 0; margin-top: 4px; }
+  .landing-page .lp-feature-card .lp-fc-top { flex-direction: column; align-items: flex-start; gap: 6px; }
+  .landing-page::before { font-size: 180px; right: -20px; bottom: -20px; }
+}
+
+/* Auth overlay */
+.auth-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(58,53,48,0.3);
+  backdrop-filter: blur(4px);
+  z-index: 100;
+  align-items: center;
+  justify-content: center;
+}
+.auth-overlay.open { display: flex; }
+.auth-overlay .auth-close {
+  position: absolute;
+  top: 16px; right: 20px;
+  background: none;
+  border: none;
+  font-size: 22px;
+  color: var(--ink-lighter);
+  cursor: pointer;
+  padding: 4px 8px;
+  line-height: 1;
+  border-radius: 4px;
+}
+.auth-overlay .auth-close:hover {
+  background: var(--border-light);
+  color: var(--ink);
+}
+.auth-overlay.open .auth-card {
+  animation: authSlideIn 0.3s ease;
+}
+@keyframes authSlideIn {
+  from { opacity: 0; transform: translateY(20px) scale(0.97); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
 </style>
 </head>
 <body>
 
-<!-- ── Auth ── -->
-<div class="auth-page" id="authPage">
-  <div class="auth-card">
-    <div class="seal">策</div>
-    <h1>诸葛策</h1>
-    <div class="sub">个人战略引擎</div>
+<!-- ── Landing Page (未登录) ── -->
+<div class="landing-page" id="landingPage">
+  <div class="lp-inner">
+    <div class="lp-hero">
+      <div class="lp-hero-seal">策</div>
+      <div class="lp-hero-text">
+        <div class="lp-badge">✦ 诸葛策 · 个人战略引擎</div>
+        <div class="lp-title">知 <em>人</em> 者智，<br>自 <em>知</em> 者明</div>
+        <div class="lp-sub">融合东方智慧与现代 AI，助你洞察自我、规划生涯、决胜未来。</div>
+        <div class="lp-quote">谋定而后动，知止而有得</div>
+      </div>
+    </div>
+    <div class="lp-features">
+      <div class="lp-feature-card">
+        <div class="lp-fc-top">
+          <div class="lp-fc-icon" style="background:var(--accent-light);color:var(--accent);">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+          </div>
+          <div class="lp-fc-title">生涯战略</div>
+        </div>
+        <div class="lp-fc-desc">结合命理与规划，洞察人生方向，做出真正适合你的长期选择</div>
+      </div>
+      <div class="lp-feature-card">
+        <div class="lp-fc-top">
+          <div class="lp-fc-icon" style="background:#e8e0d8;color:#6b6258;">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M20 21a8 8 0 1 0-16 0"/></svg>
+          </div>
+          <div class="lp-fc-title">自我认知</div>
+        </div>
+        <div class="lp-fc-desc">深度用户画像分析，发现优势盲区，建立清晰的自我定位</div>
+      </div>
+      <div class="lp-feature-card">
+        <div class="lp-fc-top">
+          <div class="lp-fc-icon" style="background:var(--accent-light);color:var(--accent);">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+          </div>
+          <div class="lp-fc-title">决策参谋</div>
+        </div>
+        <div class="lp-fc-desc">关键选择时刻，多维分析利弊，让你每次决定都有底气</div>
+      </div>
+      <div class="lp-feature-card">
+        <div class="lp-fc-top">
+          <div class="lp-fc-icon" style="background:#e8e0d8;color:#6b6258;">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-9-9" stroke-linecap="round"/><path d="M21 3v6h-6"/></svg>
+          </div>
+          <div class="lp-fc-title">运势洞察</div>
+        </div>
+        <div class="lp-fc-desc">把握时机节奏，顺势而为，在对的时间做对的事</div>
+      </div>
+    </div>
+    <div class="lp-actions">
+      <button class="lp-btn lp-btn-primary" id="landingLoginBtn">登录</button>
+      <button class="lp-btn lp-btn-secondary" id="landingRegisterBtn">注册</button>
+    </div>
+    <div class="lp-footer">使用即表示同意服务条款</div>
+  </div>
+</div>
+
+<!-- ── Auth Overlay ── -->
+<div class="auth-overlay" id="authOverlay">
+  <button class="auth-close" id="authClose">✕</button>
+  <div class="auth-card login-mode" id="authCard">
+    <div class="seal" id="authSeal">策</div>
+    <h1 id="authTitle">诸葛策</h1>
+    <div class="sub" id="authSub">谋定而后动</div>
     <div class="err" id="authErr"></div>
     <input type="text" id="authUser" placeholder="用户名" autocomplete="username">
     <input type="password" id="authPass" placeholder="密码" autocomplete="current-password">
@@ -1054,10 +1641,59 @@ function restoreInput() {
 // ── Auth ──
 let authMode = 'login';
 
+function openAuth(mode) {
+  authMode = mode || 'login';
+  const card = $('authCard');
+  overlay.classList.add('open');
+  // Reset to login mode
+  card.classList.remove('register-mode');
+  card.classList.add('login-mode');
+  $('authBtn').textContent = '登录';
+  $('authToggle').textContent = '没有账号？去注册';
+  $('authSub').textContent = '谋定而后动';
+  $('authTitle').textContent = '诸葛策';
+  $('authUser').placeholder = '用户名';
+  $('authPass').placeholder = '密码';
+  $('authUser').value = '';
+  $('authPass').value = '';
+  $('authErr').style.display = 'none';
+  setTimeout(() => $('authUser').focus(), 200);
+
+  if (mode === 'register') {
+    $('authToggle').click();  // switch to register UI
+  }
+}
+
+const overlay = $('authOverlay');
+$('landingLoginBtn').onclick = () => openAuth('login');
+$('landingRegisterBtn').onclick = () => openAuth('register');
+$('authClose').onclick = () => overlay.classList.remove('open');
+overlay.onclick = (e) => { if (e.target === overlay) overlay.classList.remove('open'); };
+
 $('authToggle').onclick = () => {
-  authMode = authMode === 'login' ? 'register' : 'login';
-  $('authBtn').textContent = authMode === 'login' ? '登录' : '注册';
-  $('authToggle').textContent = authMode === 'login' ? '没有账号？去注册' : '已有账号？去登录';
+  const isLogin = authMode === 'login';
+  authMode = isLogin ? 'register' : 'login';
+  const card = $('authCard');
+
+  if (!isLogin) {
+    card.classList.remove('register-mode');
+    card.classList.add('login-mode');
+    $('authBtn').textContent = '登录';
+    $('authToggle').textContent = '没有账号？去注册';
+    $('authSub').textContent = '谋定而后动';
+    $('authTitle').textContent = '诸葛策';
+    $('authUser').placeholder = '用户名';
+    $('authPass').placeholder = '密码';
+  } else {
+    card.classList.remove('login-mode');
+    card.classList.add('register-mode');
+    $('authBtn').textContent = '创建账号';
+    $('authToggle').textContent = '已有账号？去登录';
+    $('authSub').textContent = '开启你的战略之旅';
+    $('authTitle').textContent = '加入诸葛策';
+    $('authUser').placeholder = '设置用户名';
+    $('authPass').placeholder = '设置密码';
+  }
   $('authErr').style.display = 'none';
 };
 
@@ -1077,6 +1713,7 @@ $('authBtn').onclick = async () => {
     $('authErr').style.display = 'block';
     return;
   }
+  overlay.classList.remove('open');
   initApp();
 };
 
@@ -1086,12 +1723,12 @@ $('authUser').onkeydown = e => { if (e.key === 'Enter') $('authPass').focus(); }
 
 // ── App Init ──
 async function initApp() {
-  $('authPage').style.display = 'none';
+  $('landingPage').style.display = 'none';
+  overlay.classList.remove('open');
   $('app').classList.add('visible');
   const me = await (await fetch('/api/me')).json();
   $('userName').textContent = me.username;
   await loadConvs();
-  // 默认加载最新对话
   if (convs.length > 0) {
     await selectConv(convs[0].id);
   } else {
@@ -1152,9 +1789,46 @@ async function selectConv(convId) {
 }
 
 function showWelcome(name) {
+  const userName = name ? escapeHtml(name) : null;
   msgEl.innerHTML = '<div class="welcome">' +
-    (name ? '<div style="font-family:var(--font-heading);font-size:20px;color:var(--accent);margin-bottom:10px;">' + escapeHtml(name) + '，你好</div>' : '') +
-    '<div style="color:var(--ink-lighter);font-size:13px;line-height:1.8;letter-spacing:0.04em;">谋定而后动，知止而有得。</div></div>';
+    '<div class="hero-badge">✦ 诸葛策 · 个人战略引擎</div>' +
+    '<div class="hero-title">' + (userName ? userName + '，<em>你好</em>' : '知 <em>人</em> 者智，<br>自 <em>知</em> 者明') + '</div>' +
+    '<div class="hero-desc">' + (userName
+      ? '谋定而后动，知止而有得。<br>让我帮你规划职业战略、洞察运势走向。'
+      : '融合东方智慧与现代 AI，<br>助你洞察自我、规划生涯、决胜未来。') +
+    '</div>' +
+    '<div class="features">' +
+      '<div class="feature-card"><div class="fc-icon" style="background:var(--accent-light);color:var(--accent);">' +
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg></div>' +
+        '<div class="fc-title">生涯战略</div><div class="fc-desc">结合命理与规划，洞察人生方向</div></div>' +
+      '<div class="feature-card"><div class="fc-icon" style="background:#e8e0d8;color:#6b6258;">' +
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M20 21a8 8 0 1 0-16 0"/></svg></div>' +
+        '<div class="fc-title">自我认知</div><div class="fc-desc">深度用户画像，发现优势盲区</div></div>' +
+      '<div class="feature-card"><div class="fc-icon" style="background:var(--accent-light);color:var(--accent);">' +
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg></div>' +
+        '<div class="fc-title">决策参谋</div><div class="fc-desc">关键选择时刻，多维分析利弊</div></div>' +
+      '<div class="feature-card"><div class="fc-icon" style="background:#e8e0d8;color:#6b6258;">' +
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-9-9" stroke-linecap="round"/><path d="M21 3v6h-6"/></svg></div>' +
+        '<div class="fc-title">运势洞察</div><div class="fc-desc">把握时机节奏，顺势而为</div></div>' +
+    '</div>' +
+    '<div class="prompts">' +
+      '<div class="prompts-label">试试这样问我</div>' +
+      '<button class="prompt-chip" data-prompt="分析我的职业优势">分析我的职业优势</button>' +
+      '<button class="prompt-chip" data-prompt="给我做一份年度战略规划">年度战略规划</button>' +
+      '<button class="prompt-chip" data-prompt="看看我最近的运势">看看我最近的运势</button>' +
+      '<button class="prompt-chip" data-prompt="帮我做个人物画像">帮我做个人物画像</button>' +
+    '</div></div>';
+
+  // Bind prompt chips
+  msgEl.querySelectorAll('.prompt-chip').forEach(chip => {
+    chip.onclick = () => {
+      inputEl.value = chip.dataset.prompt;
+      inputEl.style.height = 'auto';
+      inputEl.style.height = Math.min(inputEl.scrollHeight, 280) + 'px';
+      inputEl.focus();
+      send();
+    };
+  });
 }
 
 // ── Chat ──
@@ -1262,6 +1936,7 @@ inputEl.oninput = () => {
 inputEl.onkeydown = e => {
   if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
 };
+sendBtn.onclick = () => send();
 
 async function send() {
   const text = inputEl.value.trim();
@@ -1375,9 +2050,11 @@ async function send() {
 }
 
 // ── 初始检查 ──
+// Landing page is visible by default; show app if already logged in
 async function checkAuth() {
   const me = await (await fetch('/api/me')).json();
   if (me.authenticated) {
+    $('landingPage').style.display = 'none';
     initApp();
   }
 }
@@ -1385,7 +2062,11 @@ async function checkAuth() {
 // ── 登出 ──
 $('logoutBtn').onclick = async () => {
   await fetch('/api/logout', {method:'POST'});
-  location.reload();
+  $('app').classList.remove('visible');
+  $('landingPage').style.display = '';
+  currentConvId = 0;
+  convs = [];
+  msgEl.innerHTML = '';
 };
 
 // ── Sidebar toggle ──
