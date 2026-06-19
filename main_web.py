@@ -287,10 +287,11 @@ async def onboard(request: Request):
     city = body.get("city", "").strip()
     focus = body.get("focus", "").strip()
 
-    # 保存画像
+    # 保存画像（先设置用户上下文，确保存到正确的用户下）
+    from memory import set_user as _mu, save_profile
+    _mu(user["username"])
     profile_data = {k: v for k, v in [("name", name), ("city", city), ("focus_area", focus)] if v}
     profile_data["onboarded_at"] = datetime.now().isoformat()
-    from memory import save_profile
     save_profile(profile_data)
 
     # 创建首条对话
