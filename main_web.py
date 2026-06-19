@@ -28,33 +28,7 @@ from agent import MingYuanAgent
 
 # ── 数据库 ──
 
-import pymysql
-
-class _DB:
-    """包装 pymysql 连接，提供 sqlite3 兼容的 execute() 接口"""
-    def __init__(self, conn):
-        self.conn = conn
-    def execute(self, sql, params=None):
-        cur = self.conn.cursor()
-        cur.execute(sql, params or ())
-        return cur
-    def commit(self):
-        self.conn.commit()
-    def close(self):
-        self.conn.close()
-
-def get_db():
-    conn = pymysql.connect(
-        host=os.getenv("MYSQL_HOST", "127.0.0.1"),
-        port=int(os.getenv("MYSQL_PORT", "3306")),
-        user=os.getenv("MYSQL_USER", "root"),
-        password=os.getenv("MYSQL_PASSWORD", "root"),
-        database=os.getenv("MYSQL_DATABASE", "zhugece"),
-        cursorclass=pymysql.cursors.DictCursor,
-        charset="utf8mb4",
-        autocommit=False,
-    )
-    return _DB(conn)
+from db import get_db
 
 
 def init_db():
@@ -93,6 +67,29 @@ def init_db():
             content LONGTEXT,
             msg_json LONGTEXT NOT NULL,
             created_at VARCHAR(50) NOT NULL
+        )
+    """)
+    db.execute("""
+        CREATE TABLE IF NOT EXISTS profiles (
+            user_id VARCHAR(255) PRIMARY KEY,
+            data LONGTEXT NOT NULL,
+            updated_at VARCHAR(50) NOT NULL
+        )
+    """)
+    db.execute("""
+        CREATE TABLE IF NOT EXISTS journal (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            user_id VARCHAR(255) NOT NULL,
+            entry_json LONGTEXT NOT NULL,
+            saved_at VARCHAR(50) NOT NULL
+        )
+    """)
+    db.execute("""
+        CREATE TABLE IF NOT EXISTS decisions (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            user_id VARCHAR(255) NOT NULL,
+            entry_json LONGTEXT NOT NULL,
+            saved_at VARCHAR(50) NOT NULL
         )
     """)
     for idx_def in ["idx_sessions_token ON sessions(token)",

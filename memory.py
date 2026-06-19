@@ -1,47 +1,19 @@
 import json
-import os
-import shutil
 from datetime import datetime
-from pathlib import Path
 
-DATA_DIR = Path(__file__).parent / "data"
-USER_ID = "default"
+from db import get_db
 
-
-# ── 用户管理 ──
 
 def set_user(user_id: str):
-    global USER_ID
-    USER_ID = user_id
+    global _USER_ID
+    _USER_ID = user_id
 
 
 def get_user() -> str:
-    return USER_ID
+    return _USER_ID
 
 
-def _user_dir() -> Path:
-    return DATA_DIR / USER_ID
-
-
-def _ensure_dir():
-    _user_dir().mkdir(parents=True, exist_ok=True)
-
-
-def get_user_dir() -> Path:
-    return _user_dir()
-
-
-def _migrate_from_root():
-    """从 data/ 迁移到 data/{user_id}/（只迁移一次）"""
-    root_profile = DATA_DIR / "profile.json"
-    if root_profile.exists():
-        dest = _user_dir()
-        dest.mkdir(parents=True, exist_ok=True)
-        for f in ["profile.json", "journal.jsonl", "decisions.jsonl"]:
-            src = DATA_DIR / f
-            if src.exists():
-                shutil.move(str(src), str(dest / f))
-        print(f"[迁移] 已有数据已移至 data/{USER_ID}/")
+_USER_ID = "default"
 
 
 # ── 工具函数 ──
@@ -61,10 +33,6 @@ def _safe_json_dumps(obj, **kwargs):
     return json.dumps(_sanitize(obj), **kwargs)
 
 
-def _safe_json_dump(obj, fp, **kwargs):
-    json.dump(_sanitize(obj), fp, **kwargs)
-
-
 def _deep_merge(base: dict, update: dict):
     if not isinstance(base, dict) or not isinstance(update, dict):
         return
@@ -78,67 +46,84 @@ def _deep_merge(base: dict, update: dict):
 # ── Profile ──
 
 def load_profile() -> dict:
-    _ensure_dir()
-    path = _user_dir() / "profile.json"
-    if path.exists():
-        with open(path, encoding="utf-8") as f:
-            data = json.load(f)
-            return data if isinstance(data, dict) else {}
+    db = get_db()
+    row = db.execute("SELECT data FROM profiles WHERE user_id=%s", (_USER_ID,)).fetchone()
+    db.close()
+    if row:
+        data = json.loads(row["data"])
+        return data if isinstance(data, dict) else {}
     return {}
 
 
 def save_profile(data: dict):
-    _ensure_dir()
-    profile = load_profile()
-    _deep_merge(profile, data)
-    with open(_user_dir() / "profile.json", "w", encoding="utf-8") as f:
-        _safe_json_dump(profile, f, ensure_ascii=False, indent=2)
+    db = get_db()
+    existing = db.execute("SELECT data FROM profiles WHERE user_id=%s", (_USER_ID,)).fetchone()
+    if existing:
+        profile = json.loads(existing["data"]) if isinstance(existing["data"], str) else {}
+        _deep_merge(profile, data)
+        db.execute(
+            "UPDATE profiles SET data=%s, updated_at=%s WHERE user_id=%s",
+            (_safe_json_dumps(profile, ensure_ascii=False), datetime.now().isoformat(), _USER_ID)
+        )
+    else:
+        db.execute(
+            "INSERT INTO profiles (user_id, data, updated_at) VALUES (%s,%s,%s)",
+            (_USER_ID, _safe_json_dumps(data, ensure_ascii=False), datetime.now().isoformat())
+        )
+    db.commit()
+    db.close()
 
 
 # ── Journal ──
 
 def save_journal(entry: dict):
-    _ensure_dir()
     entry["_saved_at"] = datetime.now().isoformat()
-    with open(_user_dir() / "journal.jsonl", "a", encoding="utf-8") as f:
-        f.write(_safe_json_dumps(entry, ensure_ascii=False) + "\n")
+    db = get_db()
+    db.execute(
+        "INSERT INTO journal (user_id, entry_json, saved_at) VALUES (%s,%s,%s)",
+        (_USER_ID, _safe_json_dumps(entry, ensure_ascii=False), datetime.now().isoformat())
+    )
+    db.commit()
+    db.close()
 
 
 def load_recent_journal(limit: int = 10) -> list:
-    _ensure_dir()
-    path = _user_dir() / "journal.jsonl"
-    if not path.exists():
-        return []
+    db = get_db()
+    rows = db.execute(
+        "SELECT entry_json FROM journal WHERE user_id=%s ORDER BY id DESC LIMIT %s",
+        (_USER_ID, limit)
+    ).fetchall()
+    db.close()
     entries = []
-    with open(path, encoding="utf-8") as f:
-        for line in f:
-            stripped = line.strip()
-            if stripped:
-                entries.append(json.loads(stripped))
-    return entries[-limit:]
+    for row in reversed(rows):
+        entries.append(json.loads(row["entry_json"]))
+    return entries
 
 
 # ── Decisions ──
 
 def save_decision(entry: dict):
-    _ensure_dir()
     entry["_saved_at"] = datetime.now().isoformat()
-    with open(_user_dir() / "decisions.jsonl", "a", encoding="utf-8") as f:
-        f.write(_safe_json_dumps(entry, ensure_ascii=False) + "\n")
+    db = get_db()
+    db.execute(
+        "INSERT INTO decisions (user_id, entry_json, saved_at) VALUES (%s,%s,%s)",
+        (_USER_ID, _safe_json_dumps(entry, ensure_ascii=False), datetime.now().isoformat())
+    )
+    db.commit()
+    db.close()
 
 
 def load_decisions(limit: int = 10) -> list:
-    _ensure_dir()
-    path = _user_dir() / "decisions.jsonl"
-    if not path.exists():
-        return []
+    db = get_db()
+    rows = db.execute(
+        "SELECT entry_json FROM decisions WHERE user_id=%s ORDER BY id DESC LIMIT %s",
+        (_USER_ID, limit)
+    ).fetchall()
+    db.close()
     entries = []
-    with open(path, encoding="utf-8") as f:
-        for line in f:
-            stripped = line.strip()
-            if stripped:
-                entries.append(json.loads(stripped))
-    return entries[-limit:]
+    for row in reversed(rows):
+        entries.append(json.loads(row["entry_json"]))
+    return entries
 
 
 # ── Load all context for agent ──
