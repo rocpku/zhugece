@@ -306,10 +306,14 @@ async def onboard(request: Request):
     db.close()
 
     # 生成欢迎语
-    parts = [f"我叫{name}"] if name else []
-    if city: parts.append(f"在{city}")
-    if focus: parts.append(f"想聊聊{focus}")
-    greeting = "，".join(parts) + "！" if parts else "你好！"
+    if name and city:
+        greeting = f"你好，在{city}的{name}！"
+    elif name:
+        greeting = f"你好，{name}！"
+    elif city:
+        greeting = f"你好，在{city}的朋友！"
+    else:
+        greeting = "你好！"
 
     welcome = (
         f"你好 {greeting} 🙌\n\n"
@@ -483,6 +487,26 @@ async def get_user_questions(username: str = ""):
     if not rows:
         raise HTTPException(404, "用户不存在或未设置密保问题")
     return {"questions": [r["question"] for r in rows]}
+
+
+@app.post("/api/user-questions")
+async def set_user_questions(request: Request):
+    user = require_user(request)
+    body = await request.json()
+    questions = body.get("questions", [])
+    if len(questions) < 2:
+        raise HTTPException(400, "请设置至少2个密保问题")
+
+    db = get_db()
+    db.execute("DELETE FROM user_questions WHERE username=%s", (user["username"],))
+    for q in questions:
+        db.execute(
+            "INSERT INTO user_questions (username, question, answer_hash) VALUES (%s,%s,%s)",
+            (user["username"], q["question"], hashlib.sha256(q["answer"].strip().lower().encode()).hexdigest())
+        )
+    db.commit()
+    db.close()
+    return {"ok": True}
 
 
 @app.post("/api/reset-password")
@@ -1739,6 +1763,10 @@ body {
 }
 .ob-dims button:hover { border-color: var(--accent,#8b7355); background: var(--accent-bg,#f5f0e8); }
 .ob-dims button.selected { border-color: var(--accent,#8b7355); background: var(--accent,#8b7355); color: #fff; }
+.ob-sq-row { margin-bottom: 12px; }
+.ob-sq-row select, .ob-sa-input { width: 100%; padding: 10px 12px; font-size: 14px; border: 1.5px solid var(--border,#ddd); border-radius: 8px; outline: none; transition: border-color 0.2s; box-sizing: border-box; margin-bottom: 6px; }
+.ob-sq-row select:focus, .ob-sa-input:focus { border-color: var(--accent,#8b7355); }
+.ob-sa-input { margin-bottom: 0; }
 @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
 </style>
 </head>
@@ -1820,11 +1848,28 @@ body {
 <!-- ── 新用户引导 ── -->
 <div class="onboarding-overlay" id="onboardingOverlay">
   <div class="onboarding-card">
-    <div class="ob-step active" data-step="1">
+    <div class="ob-step active" data-step="0">
+      <div class="ob-icon">🔒</div>
+      <h2>设置密保问题（可选）</h2>
+      <p class="ob-sub">忘记密码时可用它找回</p>
+      <div id="obSQFields">
+        <div class="ob-sq-row">
+          <select id="obSQ1" class="ob-select"></select>
+          <input type="text" id="obSA1" class="ob-sa-input" placeholder="答案">
+        </div>
+        <div class="ob-sq-row">
+          <select id="obSQ2" class="ob-select"></select>
+          <input type="text" id="obSA2" class="ob-sa-input" placeholder="答案">
+        </div>
+      </div>
+      <button class="ob-btn" id="obSaveSQ">保存</button>
+      <button class="ob-skip" id="obSkipSQ">跳过</button>
+    </div>
+    <div class="ob-step" data-step="1">
       <div class="ob-icon">👋</div>
       <h2>欢迎加入诸葛策</h2>
       <p class="ob-sub">先简单认识一下你</p>
-      <input type="text" id="obName" placeholder="你叫什么名字？" maxlength="20" autofocus>
+      <input type="text" id="obName" placeholder="你叫什么名字？" maxlength="20">
       <button class="ob-btn" id="obNext1">下一步</button>
     </div>
     <div class="ob-step" data-step="2">
@@ -1988,8 +2033,10 @@ $('authToggle').onclick = () => {
 let _usernameTimer = null;
 $('authUser').oninput = () => {
   clearTimeout(_usernameTimer);
-  const u = $('authUser').value.trim();
   const tip = $('authErr');
+  // 登录模式不需要检测用户名是否可用
+  if (authMode !== 'register') { tip.style.display = 'none'; return; }
+  const u = $('authUser').value.trim();
   if (u.length < 2) { tip.style.display = 'none'; return; }
   _usernameTimer = setTimeout(async () => {
     const r = await (await fetch('/api/check-username?username=' + encodeURIComponent(u))).json();
@@ -2042,6 +2089,40 @@ function showObStep(n) {
   document.querySelectorAll('.ob-step').forEach(el => el.classList.remove('active'));
   document.querySelector('.ob-step[data-step="'+n+'"]').classList.add('active');
 }
+
+// ── 密保问题（引导步骤0）──
+// 准备两个 select，去重
+function populateSQSelect(id, exclude) {
+  const sel = document.getElementById(id);
+  sel.innerHTML = '<option value="">-- 选择问题 --</option>' +
+    SECURITY_QUESTIONS.map(q => '<option value="'+q+'"'+(q===exclude?' disabled':'')+'>'+q+'</option>').join('');
+}
+populateSQSelect('obSQ1', '');
+$('obSQ1').onchange = () => populateSQSelect('obSQ2', $('obSQ1').value);
+populateSQSelect('obSQ2', '');
+
+$('obSaveSQ').onclick = async () => {
+  const q1 = $('obSQ1').value, a1 = $('obSA1').value.trim();
+  const q2 = $('obSQ2').value, a2 = $('obSA2').value.trim();
+  if (!q1 || !q2 || !a1 || !a2) {
+    $('obSaveSQ').textContent = '请选择问题和填写答案';
+    setTimeout(() => $('obSaveSQ').textContent = '保存', 1500);
+    return;
+  }
+  $('obSaveSQ').disabled = true;
+  try {
+    await fetch('/api/user-questions', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({questions: [
+        {question: q1, answer: a1},
+        {question: q2, answer: a2},
+      ]}),
+    });
+  } catch(e) {}
+  showObStep(1);
+  setTimeout(() => $('obName').focus(), 200);
+};
+$('obSkipSQ').onclick = () => { showObStep(1); setTimeout(() => $('obName').focus(), 200); };
 
 $('obNext1').onclick = () => {
   const name = $('obName').value.trim();
