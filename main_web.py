@@ -111,6 +111,10 @@ def init_db():
             db.execute(f"CREATE INDEX {idx_def}")
         except Exception:
             pass  # 索引已存在则跳过
+
+    # 清理旧版 bug 遗留的 default 用户数据（未调用 set_user 时的脏数据）
+    for table in ["profiles", "journal", "decisions"]:
+        db.execute(f"DELETE FROM {table} WHERE user_id='default'")
     db.commit()
     db.close()
 
