@@ -113,6 +113,18 @@ def init_db():
             pass  # 索引已存在则跳过
 
     # default 用户数据保留（修复前遗留的引导数据），load_profile 会回退读取
+    try:
+        db.execute("""
+            CREATE TABLE IF NOT EXISTS feedback (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                user_id INT,
+                content TEXT NOT NULL,
+                contact VARCHAR(255),
+                created_at VARCHAR(50) NOT NULL
+            )
+        """)
+    except Exception:
+        pass
     db.commit()
     db.close()
 
@@ -817,6 +829,26 @@ async def profile(request: Request):
     return {"exists": True, "name": p.get("basic", {}).get("name", user["username"])}
 
 
+# ── 反馈 ──
+
+@app.post("/api/feedback")
+async def submit_feedback(request: Request):
+    user = require_user(request)
+    body = await request.json()
+    content = (body.get("content") or "").strip()
+    contact = (body.get("contact") or "").strip()
+    if not content:
+        raise HTTPException(400, "请填写反馈内容")
+    db = get_db()
+    db.execute(
+        "INSERT INTO feedback (user_id, content, contact, created_at) VALUES (%s,%s,%s,%s)",
+        (user["id"], content, contact or None, datetime.now().isoformat())
+    )
+    db.commit()
+    db.close()
+    return {"ok": True}
+
+
 # ── 静态页面 ──
 
 HTML = r"""<!DOCTYPE html>
@@ -1146,6 +1178,137 @@ body {
 .sidebar .conv-item .cd { display:none; background:none; border:none; font-size:14px; color:var(--ink-lighter); cursor:pointer; padding:0 2px 0 6px; line-height:1; font-family:inherit; opacity:0.5; }
 .sidebar .conv-item:hover .cd { display:block; }
 .sidebar .conv-item .cd:hover { opacity:1; color:#c33; }
+.sidebar .sidebar-footer {
+  padding: 8px 12px;
+  border-top: 1px solid var(--border-light);
+}
+.sidebar .fb-btn {
+  width: 100%;
+  padding: 8px;
+  background: none;
+  border: 1px solid var(--border-light);
+  border-radius: 8px;
+  font-size: 12px;
+  color: var(--ink-lighter);
+  cursor: pointer;
+  font-family: inherit;
+  transition: all 0.15s;
+}
+.sidebar .fb-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* 反馈模态框 */
+.fb-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(58,53,48,0.3);
+  backdrop-filter: blur(4px);
+  z-index: 200;
+  align-items: center;
+  justify-content: center;
+}
+.fb-overlay.open { display: flex; }
+.fb-overlay .fb-card {
+  background: #fff;
+  border-radius: 16px;
+  padding: 32px;
+  width: 400px;
+  max-width: 90vw;
+  position: relative;
+  box-shadow: 0 12px 40px rgba(0,0,0,0.12);
+  animation: fadeIn 0.2s ease;
+}
+.fb-overlay .fb-close {
+  position: absolute;
+  top: 12px; right: 16px;
+  background: none;
+  border: none;
+  font-size: 20px;
+  color: var(--ink-lighter);
+  cursor: pointer;
+  font-family: inherit;
+}
+.fb-overlay h2 {
+  font-family: var(--font-heading);
+  font-size: 20px;
+  color: var(--ink);
+  margin: 0 0 4px;
+}
+.fb-overlay .fb-sub {
+  font-size: 13px;
+  color: var(--ink-lighter);
+  margin: 0 0 20px;
+}
+.fb-overlay textarea {
+  width: 100%;
+  padding: 12px;
+  border: 1.5px solid var(--border);
+  border-radius: 10px;
+  font-size: 14px;
+  font-family: inherit;
+  resize: vertical;
+  outline: none;
+  box-sizing: border-box;
+  transition: border-color 0.2s;
+}
+.fb-overlay textarea:focus {
+  border-color: var(--accent);
+}
+.fb-overlay input {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1.5px solid var(--border);
+  border-radius: 10px;
+  font-size: 13px;
+  font-family: inherit;
+  outline: none;
+  margin-top: 10px;
+  box-sizing: border-box;
+  transition: border-color 0.2s;
+}
+.fb-overlay input:focus {
+  border-color: var(--accent);
+}
+.fb-overlay #fbSubmit {
+  display: block;
+  width: 100%;
+  margin-top: 14px;
+  padding: 12px;
+  background: var(--ink);
+  color: #fff;
+  border: none;
+  border-radius: 10px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+  transition: opacity 0.2s;
+}
+.fb-overlay #fbSubmit:hover { opacity: 0.85; }
+.fb-overlay #fbSubmit:disabled { opacity: 0.4; cursor: default; }
+.fb-overlay .fb-success {
+  text-align: center;
+  padding: 24px 0;
+}
+.fb-overlay .fb-success-icon {
+  width: 48px; height: 48px;
+  border-radius: 50%;
+  background: #4caf50;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 24px;
+  margin: 0 auto 12px;
+}
+.fb-overlay .fb-success p {
+  font-size: 15px;
+  color: var(--ink-light);
+  margin: 0;
+}
 
 /* Main chat */
 .chat-main {
@@ -1886,6 +2049,9 @@ body {
     <div class="sidebar" id="sidebar">
       <button class="new-btn" id="newConvBtn">+ 新对话</button>
       <div class="conv-list" id="convList"></div>
+      <div class="sidebar-footer">
+        <button class="fb-btn" id="feedbackBtn">反馈建议</button>
+      </div>
     </div>
     <div class="chat-main">
       <div class="messages" id="messages"></div>
@@ -1896,6 +2062,22 @@ body {
           <button id="sendBtn" title="发送"><svg viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg></button>
         </div>
       </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── 反馈模态框 ── -->
+<div class="fb-overlay" id="fbOverlay">
+  <div class="fb-card">
+    <button class="fb-close" id="fbClose">✕</button>
+    <h2>反馈建议</h2>
+    <p class="fb-sub">帮助我们做得更好</p>
+    <textarea id="fbContent" placeholder="说说你的想法…" rows="5"></textarea>
+    <input type="text" id="fbContact" placeholder="联系方式（选填，微信/邮箱等）">
+    <button id="fbSubmit">提交反馈</button>
+    <div class="fb-success" id="fbSuccess" style="display:none;">
+      <div class="fb-success-icon">✓</div>
+      <p>感谢你的反馈！</p>
     </div>
   </div>
 </div>
@@ -2511,7 +2693,35 @@ $('menuBtn').onclick = () => {
 };
 
 checkAuth();
+
+// ── 反馈 ──
+$('feedbackBtn').onclick = () => $('fbOverlay').classList.add('open');
+$('fbClose').onclick = () => $('fbOverlay').classList.remove('open');
+$('fbOverlay').onclick = (e) => {
+  if (e.target === $('fbOverlay')) $('fbOverlay').classList.remove('open');
+};
+$('fbSubmit').onclick = async () => {
+  const content = $('fbContent').value.trim();
+  if (!content) return;
+  $('fbSubmit').disabled = true;
+  $('fbSubmit').textContent = '提交中…';
+  try {
+    await fetch('/api/feedback', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({content, contact: $('fbContact').value.trim()}),
+    });
+    $('fbContent').style.display = 'none';
+    $('fbContact').style.display = 'none';
+    $('fbSubmit').style.display = 'none';
+    $('fbSuccess').style.display = 'block';
+  } catch {
+    $('fbSubmit').disabled = false;
+    $('fbSubmit').textContent = '提交失败，重试';
+  }
+};
 </script>
+
 </body>
 </html>"""
 
