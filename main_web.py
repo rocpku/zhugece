@@ -1502,15 +1502,14 @@ body {
 }
 .landing-page .lp-hero {
   display: flex;
-  flex-direction: column;
   align-items: center;
-  text-align: center;
+  gap: 32px;
   margin-bottom: 48px;
 }
 .landing-page .lp-logo {
-  width: 100px;
+  flex-shrink: 0;
+  width: 80px;
   height: 100px;
-  margin-bottom: 20px;
   color: var(--accent);
   animation: welcomeFade 0.6s ease both;
   animation-delay: 0.05s;
@@ -1519,38 +1518,45 @@ body {
   width: 100%;
   height: 100%;
 }
+.landing-page .lp-hero-right {
+  flex: 1;
+}
 .landing-page .lp-title {
   font-family: var(--font-heading);
-  font-size: 48px;
+  font-size: 42px;
   font-weight: 700;
   color: var(--ink);
   letter-spacing: 0.15em;
   line-height: 1.2;
-  margin-bottom: 12px;
-  animation: welcomeFade 0.6s ease both;
-  animation-delay: 0.1s;
-}
-.landing-page .lp-slogan {
-  font-size: 16px;
-  color: var(--accent);
-  letter-spacing: 0.12em;
   margin-bottom: 8px;
   animation: welcomeFade 0.6s ease both;
+  animation-delay: 0.1s;
+  text-align: left;
+}
+.landing-page .lp-slogan {
+  font-size: 15px;
+  color: var(--accent);
+  letter-spacing: 0.12em;
+  margin-bottom: 6px;
+  animation: welcomeFade 0.6s ease both;
   animation-delay: 0.15s;
+  text-align: left;
 }
 .landing-page .lp-desc {
-  font-size: 14px;
+  font-size: 13px;
   color: var(--ink-light);
   letter-spacing: 0.04em;
   line-height: 1.6;
   animation: welcomeFade 0.6s ease both;
   animation-delay: 0.2s;
+  text-align: left;
 }
 .landing-page .lp-features {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 14px;
   margin-bottom: 36px;
+  text-align: left;
   animation: welcomeFade 0.6s ease both;
   animation-delay: 0.25s;
 }
@@ -1591,7 +1597,6 @@ body {
 .landing-page .lp-actions {
   display: flex;
   gap: 14px;
-  justify-content: center;
   animation: welcomeFade 0.6s ease both;
   animation-delay: 0.25s;
 }
@@ -1628,8 +1633,9 @@ body {
 
 @media (max-width: 700px) {
   .landing-page { padding: 40px 20px; }
-  .landing-page .lp-logo { width: 72px; height: 72px; }
-  .landing-page .lp-title { font-size: 32px; }
+  .landing-page .lp-hero { gap: 20px; }
+  .landing-page .lp-logo { width: 56px; height: 70px; }
+  .landing-page .lp-title { font-size: 28px; }
   .landing-page .lp-features { gap: 10px; }
   .landing-page .lp-feature-card { padding: 14px 14px; }
   .landing-page::before { font-size: 180px; right: -20px; bottom: -20px; }
@@ -1731,20 +1737,31 @@ body {
   <div class="lp-inner">
     <div class="lp-hero">
       <div class="lp-logo">
-        <svg viewBox="0 0 100 100" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-          <!-- 纶巾侧面：帽身 -->
-          <path d="M22 52 Q18 12 45 10 Q75 12 82 46"/>
+        <svg viewBox="0 -15 100 125" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <!-- 纶巾帽体 -->
+          <path d="M22 52 L22 28 Q22 -4 50 -10 Q78 -4 78 28 L78 52"/>
           <!-- 束带 -->
-          <path d="M18 46 Q48 54 84 46" stroke-width="4"/>
-          <!-- 侧面飘带 -->
-          <path d="M82 48 Q90 68 78 86 Q74 94 78 102"/>
-          <!-- 帽褶 -->
-          <path d="M38 16 Q52 14 62 18" stroke-width="1.5" opacity="0.4"/>
+          <path d="M18 52 Q50 58 82 52" stroke-width="4"/>
+          <path d="M18 48 Q50 54 82 48" stroke-width="1.8"/>
+          <!-- 纵向褶线 -->
+          <path d="M30 -6 L28 50" stroke-width="1.6" opacity="0.5"/>
+          <path d="M38 -9 L36 51" stroke-width="1.6" opacity="0.5"/>
+          <path d="M46 -10 L44 52" stroke-width="1.6" opacity="0.55"/>
+          <path d="M54 -10 L56 52" stroke-width="1.6" opacity="0.55"/>
+          <path d="M62 -9 L64 51" stroke-width="1.6" opacity="0.5"/>
+          <path d="M70 -6 L72 50" stroke-width="1.6" opacity="0.5"/>
+          <!-- 帽饰 -->
+          <rect x="47" y="52" width="6" height="5" rx="1.5" fill="currentColor" stroke="none"/>
+          <!-- 飘带 -->
+          <path d="M20 52 Q14 68 22 82 Q26 88 20 96"/>
+          <path d="M80 52 Q86 68 78 82 Q74 88 80 96"/>
         </svg>
       </div>
-      <div class="lp-title">诸葛策</div>
-      <div class="lp-slogan">融合东方智慧与现代 AI</div>
-      <div class="lp-desc">助你洞察自我、规划生涯、决胜未来</div>
+      <div class="lp-hero-right">
+        <div class="lp-title">诸葛策</div>
+        <div class="lp-slogan">融合东方智慧与现代 AI</div>
+        <div class="lp-desc">助你洞察自我、规划生涯、决胜未来</div>
+      </div>
     </div>
     <div class="lp-features">
       <div class="lp-feature-card">
