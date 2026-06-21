@@ -126,6 +126,21 @@ def init_db():
     except Exception:
         pass
 
+    db.execute("""
+        CREATE TABLE IF NOT EXISTS bookmarks (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            user_id INT NOT NULL,
+            conversation_id INT NOT NULL,
+            message_id INT NOT NULL,
+            role VARCHAR(10) NOT NULL,
+            content_preview LONGTEXT NOT NULL,
+            created_at VARCHAR(50) NOT NULL
+        )
+    """)
+    try:
+        db.execute("ALTER TABLE bookmarks MODIFY content_preview LONGTEXT NOT NULL")
+    except Exception:
+        pass
     # 清理指定测试/废弃用户
     for _del_user in ["shoubiao", "test"]:
         _du = db.execute("SELECT id FROM users WHERE username=%s", (_del_user,)).fetchone()
@@ -177,14 +192,16 @@ def _restore_messages(agent: MingYuanAgent, conv_id: int):
 
 def _save_message(conv_id: int, role: str, content, msg_dict: dict, user_id: int = 0):
     db = get_db()
-    db.execute(
+    cur = db.execute(
         "INSERT INTO messages (conversation_id, role, content, msg_json, created_at) VALUES (%s,%s,%s,%s,%s)",
         (conv_id, role, content or "", json.dumps(msg_dict, ensure_ascii=False), datetime.now().isoformat())
     )
+    msg_id = cur.lastrowid
     if role == "assistant" and user_id:
         db.execute("UPDATE users SET total_turns = total_turns + 1 WHERE id=%s", (user_id,))
     db.commit()
     db.close()
+    return msg_id
 
 
 def _update_conv_time(conv_id: int):
@@ -641,13 +658,13 @@ async def conversation_history(conv_id: int, request: Request):
         db.close()
         raise HTTPException(404, "对话不存在")
     rows = db.execute(
-        "SELECT role, content FROM messages WHERE conversation_id=%s AND role IN ('user','assistant') AND content != '' ORDER BY id",
+        "SELECT id, role, content FROM messages WHERE conversation_id=%s AND role IN ('user','assistant') AND content != '' ORDER BY id",
         (conv_id,)
     ).fetchall()
     db.close()
     result = []
     for r in rows:
-        result.append({"role": r["role"], "content": r["content"]})
+        result.append({"role": r["role"], "content": r["content"], "id": r["id"]})
     return result
 
 
@@ -707,11 +724,13 @@ async def chat(request: Request):
     agent = get_agent_for_conv(user["id"], conv_id)
 
     # 保存用户消息
-    _save_message(conv_id, "user", user_message, {"role": "user", "content": user_message})
+    user_msg_id = _save_message(conv_id, "user", user_message, {"role": "user", "content": user_message})
     _update_conv_time(conv_id)
 
     async def event_stream():
         full_response = ""
+        # 发送用户消息 ID
+        yield f"data: {json.dumps({'type': 'user_msg_id', 'message_id': user_msg_id}, ensure_ascii=False)}\n\n"
         try:
             for msg_type, content in agent.chat(user_message):
                 if await request.is_disconnected():
@@ -720,12 +739,15 @@ async def chat(request: Request):
                     full_response += content
                 data = json.dumps({"type": msg_type, "content": content}, ensure_ascii=False)
                 yield f"data: {data}\n\n"
-            yield "data: [DONE]\n\n"
 
-            # 保存 assistant 回复（同时累计轮数）
+            # 保存 assistant 回复（同时累计轮数），在 [DONE] 之前
+            assistant_msg_id = 0
             if full_response:
-                _save_message(conv_id, "assistant", full_response, {"role": "assistant", "content": full_response}, user["id"])
+                assistant_msg_id = _save_message(conv_id, "assistant", full_response, {"role": "assistant", "content": full_response}, user["id"])
                 _update_conv_time(conv_id)
+                yield f"data: {json.dumps({'type': 'assistant_msg_id', 'message_id': assistant_msg_id}, ensure_ascii=False)}\n\n"
+
+            yield "data: [DONE]\n\n"
         except Exception as e:
             yield f"data: {json.dumps({'type': 'error', 'content': str(e)}, ensure_ascii=False)}\n\n"
 
@@ -982,6 +1004,77 @@ async def submit_feedback(request: Request):
         "INSERT INTO feedback (user_id, content, contact, created_at) VALUES (%s,%s,%s,%s)",
         (user["id"], content, contact or None, datetime.now().isoformat())
     )
+    db.commit()
+    db.close()
+    return {"ok": True}
+
+
+# ── 收藏 ──
+
+@app.post("/api/bookmarks")
+async def create_bookmark(request: Request):
+    user = require_user(request)
+    body = await request.json()
+    conversation_id = body.get("conversation_id")
+    message_id = body.get("message_id")
+    role = body.get("role")
+    content_preview = body.get("content_preview") or ""
+    if not all([conversation_id, message_id, role]):
+        raise HTTPException(400, "缺少必要字段")
+    db = get_db()
+    existing = db.execute(
+        "SELECT id FROM bookmarks WHERE user_id=%s AND message_id=%s",
+        (user["id"], message_id)
+    ).fetchone()
+    if existing:
+        db.close()
+        return {"ok": True, "id": existing["id"], "created": False}
+    db.execute(
+        "INSERT INTO bookmarks (user_id, conversation_id, message_id, role, content_preview, created_at) VALUES (%s,%s,%s,%s,%s,%s)",
+        (user["id"], conversation_id, message_id, role, content_preview, datetime.now().isoformat())
+    )
+    db.commit()
+    new_id = db.execute("SELECT LAST_INSERT_ID() as id").fetchone()["id"]
+    db.close()
+    return {"ok": True, "id": new_id, "created": True}
+
+
+@app.get("/api/bookmarks")
+async def list_bookmarks(request: Request):
+    user = require_user(request)
+    page = max(1, int(request.query_params.get("page", 1)))
+    page_size = max(1, min(100, int(request.query_params.get("page_size", 10))))
+    offset = (page - 1) * page_size
+    db = get_db()
+    total = db.execute(
+        "SELECT COUNT(*) AS cnt FROM bookmarks WHERE user_id=%s",
+        (user["id"],)
+    ).fetchone()["cnt"]
+    rows = db.execute("""
+        SELECT b.id, b.conversation_id, b.message_id, b.role, b.content_preview, b.created_at,
+               c.id IS NOT NULL AS conv_exists
+        FROM bookmarks b
+        LEFT JOIN conversations c ON b.conversation_id = c.id
+        WHERE b.user_id = %s
+        ORDER BY b.created_at DESC
+        LIMIT %s OFFSET %s
+    """, (user["id"], page_size, offset)).fetchall()
+    db.close()
+    return {"items": rows, "total": total, "page": page, "page_size": page_size}
+
+
+@app.delete("/api/bookmarks/{bookmark_id}")
+async def delete_bookmark(bookmark_id: int, request: Request):
+    user = require_user(request)
+    db = get_db()
+    row = db.execute(
+        "SELECT id FROM bookmarks WHERE id=%s AND user_id=%s",
+        (bookmark_id, user["id"])
+    ).fetchone()
+    if not row:
+        db.close()
+        raise HTTPException(404, "收藏不存在")
+    db.execute("DELETE FROM bookmarks WHERE id=%s", (bookmark_id,))
     db.commit()
     db.close()
     return {"ok": True}
@@ -1281,6 +1374,27 @@ body {
   transform: translateY(-1px);
   color: #fff;
 }
+.top-bar .bookmark-btn {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 12px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink-light);
+  cursor: pointer;
+  letter-spacing: 0.04em;
+  transition: all 0.15s;
+  font-family: inherit;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.top-bar .bookmark-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-light);
+}
 .top-bar .user-info {
   margin-left: auto;
   display: flex;
@@ -1431,6 +1545,222 @@ body {
 @keyframes insightProgress {
   from { width: 0; }
   to { width: 100%; }
+}
+
+/* ── 收藏模态框 ── */
+.bm-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  background: rgba(0,0,0,0.3);
+  align-items: center;
+  justify-content: center;
+}
+.bm-overlay.open { display: flex; }
+.bm-overlay .bm-card {
+  background: var(--bg);
+  border-radius: 16px;
+  width: 90%;
+  max-width: 580px;
+  max-height: 85vh;
+  overflow-y: auto;
+  position: relative;
+  padding: 40px 28px 28px;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.15);
+}
+.bm-overlay .bm-close {
+  position: absolute;
+  top: 12px; right: 12px;
+  width: 32px; height: 32px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(0,0,0,0.05);
+  color: var(--ink-lighter);
+  font-size: 16px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s;
+}
+.bm-overlay .bm-close:hover {
+  background: rgba(0,0,0,0.1);
+  color: var(--ink);
+}
+.bm-overlay h2 {
+  font-family: var(--font-heading);
+  font-size: 18px;
+  color: var(--ink);
+  margin: 0 0 16px;
+  letter-spacing: 0.08em;
+}
+.bm-overlay .bm-empty {
+  text-align: center;
+  padding: 40px 0;
+  color: var(--ink-lighter);
+  font-size: 14px;
+}
+.bm-overlay .bm-list { min-height: 60px; }
+.bm-overlay .bm-item {
+  padding: 12px 14px;
+  border: 1px solid var(--border-light);
+  border-radius: 10px;
+  margin-bottom: 10px;
+  transition: background 0.12s, border-color 0.12s;
+}
+.bm-overlay .bm-item:last-child { margin-bottom: 0; }
+.bm-overlay .bm-item:hover {
+  background: var(--surface);
+  border-color: var(--accent-light);
+  cursor: pointer;
+}
+.bm-overlay .bm-item-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+.bm-overlay .bm-item-role {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 4px;
+  letter-spacing: 0.04em;
+}
+.bm-overlay .bm-item-role.user {
+  background: var(--ink);
+  color: #fff;
+}
+.bm-overlay .bm-item-role.assistant {
+  background: var(--accent-light);
+  color: var(--accent);
+}
+.bm-overlay .bm-item-del {
+  background: none;
+  border: none;
+  font-size: 14px;
+  color: var(--ink-lighter);
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
+  transition: all 0.12s;
+}
+.bm-overlay .bm-item-del:hover {
+  background: rgba(200,50,50,0.1);
+  color: #c33;
+}
+.bm-overlay .bm-item-jump {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--accent);
+  padding: 0 6px;
+  margin-right: auto;
+  transition: transform 0.12s;
+}
+.bm-overlay .bm-item-jump:hover {
+  transform: translateX(2px);
+}
+.bm-overlay .bm-item-deleted-tag {
+  color: var(--ink-light);
+  font-size: 11px;
+  margin-right: auto;
+}
+.bm-overlay .bm-item.conv-deleted {
+  opacity: 0.75;
+}
+.bm-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 16px 0 4px;
+  border-top: 1px solid var(--border-light);
+  margin-top: 8px;
+}
+.bm-pg-info {
+  font-size: 12px;
+  color: var(--ink-lighter);
+}
+.bm-pg-pages {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.bm-pg-btn {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 10px;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--ink);
+  transition: all 0.12s;
+}
+.bm-pg-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.bm-pg-current {
+  font-size: 12px;
+  color: var(--ink-light);
+  padding: 0 4px;
+}
+.bm-pg-size select {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 6px;
+  font-size: 11px;
+  color: var(--ink-light);
+  cursor: pointer;
+}
+.bm-overlay .bm-item-preview {
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--ink);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  margin-bottom: 6px;
+  word-break: break-all;
+  transition: all 0.2s;
+  cursor: pointer;
+}
+.bm-overlay .bm-item.expanded .bm-item-preview {
+  display: none;
+}
+.bm-overlay .bm-item-full {
+  display: none;
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--ink);
+  margin-bottom: 8px;
+  word-break: break-word;
+  cursor: default;
+}
+.bm-overlay .bm-item-full p { margin: 0 0 8px; }
+.bm-overlay .bm-item-full p:last-child { margin-bottom: 0; }
+.bm-overlay .bm-item.expanded .bm-item-full {
+  display: block;
+}
+.bm-overlay .bm-item.expanded {
+  background: var(--surface);
+  border-color: var(--accent-light);
+}
+.bm-overlay .bm-item-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 11px;
+  color: var(--ink-lighter);
+}
+.bm-overlay .bm-item-date {
+  flex-shrink: 0;
+  font-size: 11px;
 }
 
 /* 策论卡片 */
@@ -1721,13 +2051,21 @@ body {
   line-height: 1.65;
 }
 /* Action buttons below user messages */
-.msg.user .msg-actions { display:flex; gap:2px; margin-top:2px; opacity:0; transition:opacity 0.15s; padding-right:4px; }
-.msg.user:hover .msg-actions { opacity:1; }
-.msg.user .msg-actions button { background:none; border:none; width:22px; height:22px; border-radius:4px; display:flex; align-items:center; justify-content:center; cursor:pointer; color:var(--ink-lighter); transition:all 0.12s; }
-.msg.user .msg-actions button:hover { background:var(--border); color:var(--ink-light); }
+.msg .msg-actions { display:flex; gap:2px; margin-top:2px; opacity:0; transition:opacity 0.15s; }
+.msg:hover .msg-actions { opacity:1; }
+.msg.user .msg-actions { padding-right:4px; }
+.msg .msg-actions button { background:none; border:none; width:22px; height:22px; border-radius:4px; display:flex; align-items:center; justify-content:center; cursor:pointer; color:var(--ink-lighter); transition:all 0.12s; }
+.msg .msg-actions button:hover { background:var(--border); color:var(--ink-light); }
 .msg.user .msg-actions button svg { width:13px; height:13px; fill:currentColor; stroke:currentColor; stroke-width:0.5; }
+.msg.agent .msg-actions button svg { width:13px; height:13px; }
+.msg .msg-actions .bm-btn.bookmarked { color:var(--accent); }
+.msg .msg-actions .bm-btn.bookmarked svg { fill:var(--accent); stroke:var(--accent); }
 .msg.agent {
   align-self: flex-start;
+  display: flex;
+  flex-direction: column;
+}
+.msg-agent-wrap {
   background: var(--surface);
   border-radius: 16px 16px 16px 4px;
   padding: 16px 22px;
@@ -1737,6 +2075,7 @@ body {
   border: 1px solid var(--border-light);
   color: var(--ink);
 }
+.msg.agent .msg-actions { padding-top: 4px; }
 .msg.agent p { margin:0.5em 0; }
 .msg.agent p:first-child { margin-top:0; }
 .msg.agent p:last-child { margin-bottom:0; }
@@ -2406,6 +2745,7 @@ body {
     </div>
     <h1>诸葛策</h1>
     <button class="insight-btn" id="insightBtn"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px"><path d="M12 20V10"/><path d="M18 20V4"/><path d="M6 20v-4"/></svg>我的洞察</button>
+    <button class="bookmark-btn" id="bookmarkBtn"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:3px"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16z"/></svg>我的收藏</button>
     <div class="user-info">
       <span id="userName"></span>
       <button class="logout-btn" id="logoutBtn">退出</button>
@@ -2442,6 +2782,18 @@ body {
   </div>
 </div>
 
+<!-- ── 收藏模态框 ── -->
+<div class="bm-overlay" id="bmOverlay">
+  <div class="bm-card">
+    <button class="bm-close" id="bmClose">✕</button>
+    <h2>我的收藏</h2>
+    <div class="bm-list" id="bmList">
+      <div class="bm-empty">暂无收藏</div>
+    </div>
+    <div class="bm-pagination" id="bmPagination" style="display:none;"></div>
+  </div>
+</div>
+
 <!-- ── 反馈模态框 ── -->
 <div class="fb-overlay" id="fbOverlay">
   <div class="fb-card">
@@ -2466,6 +2818,9 @@ let convs = [];
 let loading = false;
 let abortController = null;
 let lastUserMsgEl = null;
+let bookmarkMap = new Map();
+let pendingScrollMsgId = 0;
+let bmPage = 1, bmPageSize = 10, bmTotal = 0;
 
 const $ = id => document.getElementById(id);
 const msgEl = $('messages');
@@ -2473,6 +2828,7 @@ const inputEl = $('input');
 const sendBtn = $('sendBtn');
 const stopBtn = $('stopBtn');
 const inputArea = $('inputArea');
+const BM_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16z"/></svg>';
 
 function restoreInput() {
   loading = false;
@@ -2708,6 +3064,11 @@ async function initApp(convId, welcomeMsg) {
   const me = await (await fetch('/api/me')).json();
   $('userName').textContent = me.username;
   await loadConvs();
+  // 预加载收藏
+  try {
+    const bms = await (await fetch('/api/bookmarks')).json();
+    for (const bm of bms) bookmarkMap.set(bm.conversation_id + ':' + bm.message_id, bm.id);
+  } catch(e) {}
   if (convId && welcomeMsg) {
     // 新用户引导完成，显示欢迎消息
     currentConvId = convId;
@@ -2767,8 +3128,16 @@ async function selectConv(convId) {
   const msgs = await (await fetch('/api/conversations/' + convId + '/history')).json();
   if (msgs.length > 0) {
     for (const m of msgs) {
-      if (m.role === 'user') addMessage('user', escapeHtml(m.content), m.content);
-      else addMessage('agent', marked.parse(m.content));
+      if (m.role === 'user') addMessage('user', escapeHtml(m.content), m.content, m.id);
+      else addMessage('agent', marked.parse(m.content), m.content, m.id);
+    }
+    // scroll to target message
+    if (pendingScrollMsgId) {
+      requestAnimationFrame(() => {
+        const target = document.querySelector('.msg[data-msg-id="' + pendingScrollMsgId + '"]');
+        if (target) target.scrollIntoView({ block: 'start', behavior: 'smooth' });
+        pendingScrollMsgId = 0;
+      });
     }
   } else {
     showWelcome(null);
@@ -2804,33 +3173,45 @@ function showWelcome(name) {
 }
 
 // ── Chat ──
-function addMessage(role, content, rawText) {
+function addMessage(role, content, rawText, msgId) {
   const div = document.createElement('div');
   div.className = 'msg ' + role;
+  if (msgId) div.dataset.msgId = msgId;
+  const actionsHtml =
+    '<button class="copy-btn" title="复制">' +
+      '<svg viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2" stroke="currentColor" stroke-width="1.5" fill="none"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" stroke="currentColor" stroke-width="1.5" fill="none"/></svg>' +
+    '</button>' +
+    '<button class="regen-btn" title="重新生成">' +
+      '<svg viewBox="0 0 24 24"><path d="M17.65 6.35A7.96 7.96 0 0 0 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0 1 12 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z" fill="currentColor"/></svg>' +
+    '</button>' +
+    '<button class="edit-btn" title="编辑">' +
+      '<svg viewBox="0 0 24 24"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z" fill="currentColor"/></svg>' +
+    '</button>' +
+    '<button class="bm-btn" title="收藏">' + BM_SVG + '</button>';
+
   if (role === 'user') {
     div.dataset.rawText = rawText || content;
     div.innerHTML = '<div class="msg-bubble">' + content + '</div>';
-    // Three action buttons
     const actions = document.createElement('div');
     actions.className = 'msg-actions';
-    actions.innerHTML =
-      '<button class="copy-btn" title="复制">' +
-        '<svg viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2" stroke="currentColor" stroke-width="1.5" fill="none"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" stroke="currentColor" stroke-width="1.5" fill="none"/></svg>' +
-      '</button>' +
-      '<button class="regen-btn" title="重新生成">' +
-        '<svg viewBox="0 0 24 24"><path d="M17.65 6.35A7.96 7.96 0 0 0 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0 1 12 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z" fill="currentColor"/></svg>' +
-      '</button>' +
-      '<button class="edit-btn" title="编辑">' +
-        '<svg viewBox="0 0 24 24"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z" fill="currentColor"/></svg>' +
-      '</button>';
+    actions.innerHTML = actionsHtml;
     div.appendChild(actions);
   } else {
-    div.innerHTML = content;
+    div.dataset.rawText = (rawText || content).replace(/<[^>]+>/g, '');
+    div.innerHTML = '<div class="msg-agent-wrap">' + content + '</div>';
+    const actions = document.createElement('div');
+    actions.className = 'msg-actions';
+    actions.innerHTML = '<button class="bm-btn" title="收藏">' + BM_SVG + '</button>';
+    div.appendChild(actions);
   }
   msgEl.appendChild(div);
   requestAnimationFrame(() => msgEl.scrollTop = msgEl.scrollHeight);
 
-  // Bind action handlers
+  // Bind bookmark handler
+  const bmBtn = div.querySelector('.bm-btn');
+  if (bmBtn) bmBtn.onclick = () => toggleBookmark(div, role);
+
+  // Bind user-specific handlers
   if (role === 'user') {
     const raw = div.dataset.rawText;
     div.querySelector('.copy-btn').onclick = () => {
@@ -2840,6 +3221,10 @@ function addMessage(role, content, rawText) {
     div.querySelector('.edit-btn').onclick = () => startEdit(div);
     if (rawText != null) lastUserMsgEl = div;
   }
+
+  // Update bookmark state
+  if (msgId && currentConvId) updateBookmarkButtonState(div);
+
   return div;
 }
 
@@ -2867,10 +3252,13 @@ function restoreMsgActions(msgDiv, text) {
       '<button class="copy-btn" title="复制"><svg viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2" stroke="currentColor" stroke-width="1.5" fill="none"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" stroke="currentColor" stroke-width="1.5" fill="none"/></svg></button>' +
       '<button class="regen-btn" title="重新生成"><svg viewBox="0 0 24 24"><path d="M17.65 6.35A7.96 7.96 0 0 0 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0 1 12 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z" fill="currentColor"/></svg></button>' +
       '<button class="edit-btn" title="编辑"><svg viewBox="0 0 24 24"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z" fill="currentColor"/></svg></button>' +
+      '<button class="bm-btn" title="收藏">' + BM_SVG + '</button>' +
     '</div>';
   msgDiv.querySelector('.copy-btn').onclick = () => navigator.clipboard.writeText(text).catch(() => {});
   msgDiv.querySelector('.regen-btn').onclick = () => regenerate(msgDiv);
   msgDiv.querySelector('.edit-btn').onclick = () => startEdit(msgDiv);
+  msgDiv.querySelector('.bm-btn').onclick = () => toggleBookmark(msgDiv, 'user');
+  if (currentConvId && msgDiv.dataset.msgId) updateBookmarkButtonState(msgDiv);
 }
 
 async function doEdit(msgDiv, newText) {
@@ -2899,6 +3287,156 @@ function escapeHtml(t) {
   const d = document.createElement('div');
   d.textContent = t;
   return d.innerHTML;
+}
+
+// ── 收藏 ──
+
+async function toggleBookmark(msgDiv, role) {
+  const msgId = parseInt(msgDiv.dataset.msgId);
+  if (!msgId || !currentConvId) return;
+  const key = currentConvId + ':' + msgId;
+  const bmBtn = msgDiv.querySelector('.bm-btn');
+  if (bookmarkMap.has(key)) {
+    const bmId = bookmarkMap.get(key);
+    await fetch('/api/bookmarks/' + bmId, {method: 'DELETE'});
+    bookmarkMap.delete(key);
+    if (bmBtn) bmBtn.classList.remove('bookmarked');
+  } else {
+    const preview = msgDiv.dataset.rawText || msgDiv.textContent || '';
+    const resp = await fetch('/api/bookmarks', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        conversation_id: currentConvId,
+        message_id: msgId,
+        role: role,
+        content_preview: preview,
+      }),
+    });
+    const data = await resp.json();
+    if (data.created !== false) {
+      bookmarkMap.set(key, data.id);
+      if (bmBtn) bmBtn.classList.add('bookmarked');
+    }
+  }
+}
+
+function updateBookmarkButtonState(msgDiv) {
+  const msgId = parseInt(msgDiv.dataset.msgId);
+  if (!msgId || !currentConvId) return;
+  const key = currentConvId + ':' + msgId;
+  const bmBtn = msgDiv.querySelector('.bm-btn');
+  if (bmBtn && bookmarkMap.has(key)) {
+    bmBtn.classList.add('bookmarked');
+  }
+}
+
+async function renderBookmarkList() {
+  $('bmOverlay').classList.add('open');
+  const list = $('bmList');
+  list.innerHTML = '<div class="bm-empty">加载中…</div>';
+
+  // 隐藏分页栏
+  const pEl = $('bmPagination');
+  if (pEl) pEl.style.display = 'none';
+
+  let data;
+  try {
+    const resp = await fetch('/api/bookmarks?page=' + bmPage + '&page_size=' + bmPageSize);
+    data = await resp.json();
+  } catch {
+    list.innerHTML = '<div class="bm-empty">加载失败</div>';
+    return;
+  }
+
+  const bookmarks = data.items;
+  bmTotal = data.total;
+
+  // 同步 bookmarkMap
+  bookmarkMap.clear();
+  for (const bm of bookmarks) {
+    bookmarkMap.set(bm.conversation_id + ':' + bm.message_id, bm.id);
+  }
+  document.querySelectorAll('.msg[data-msg-id]').forEach(el => updateBookmarkButtonState(el));
+
+  if (bookmarks.length === 0) {
+    list.innerHTML = (bmPage === 1 ? '<div class="bm-empty">暂无收藏</div>' : '<div class="bm-empty">没有更多了</div>');
+    renderPagination();
+    return;
+  }
+
+  list.innerHTML = bookmarks.map(bm =>
+    '<div class="bm-item' + (bm.conv_exists ? '' : ' conv-deleted') + '" data-id="' + bm.id + '" data-conv-id="' + bm.conversation_id + '" data-msg-id="' + bm.message_id + '">' +
+      '<div class="bm-item-top">' +
+        '<span class="bm-item-date">' + (bm.created_at || '').slice(0, 16).replace('T', ' ') + '</span>' +
+        (bm.role === 'user' ? '<span class="bm-item-role user">我</span>' : '') +
+      '</div>' +
+      '<div class="bm-item-preview">' + escapeHtml(bm.content_preview) + '</div>' +
+      '<div class="bm-item-full">' + marked.parse(bm.content_preview) + '</div>' +
+      '<div class="bm-item-meta">' +
+        (bm.conv_exists
+          ? '<button class="bm-item-jump" title="跳转至对话">↗ 跳转对话</button>'
+          : '<span class="bm-item-deleted-tag">对话已删除</span>') +
+        '<button class="bm-item-del" data-bookmark-id="' + bm.id + '" title="取消收藏">✕</button>' +
+      '</div>' +
+    '</div>'
+  ).join('');
+
+  // 展开/收起 & 跳转
+  list.querySelectorAll('.bm-item').forEach(el => {
+    const convId = parseInt(el.dataset.convId);
+    el.onclick = (e) => {
+      if (e.target.classList.contains('bm-item-del')) return;
+      if (e.target.classList.contains('bm-item-jump')) {
+        pendingScrollMsgId = parseInt(el.dataset.msgId);
+        $('bmOverlay').classList.remove('open');
+        selectConv(convId);
+        return;
+      }
+      el.classList.toggle('expanded');
+    };
+  });
+
+  // 删除按钮（二次确认）
+  list.querySelectorAll('.bm-item-del').forEach(btn => {
+    btn.onclick = async (e) => {
+      e.stopPropagation();
+      if (!confirm('确定取消收藏？')) return;
+      const bmId = parseInt(btn.dataset.bookmarkId);
+      for (const [key, id] of bookmarkMap) {
+        if (id === bmId) { bookmarkMap.delete(key); break; }
+      }
+      await fetch('/api/bookmarks/' + bmId, {method: 'DELETE'});
+      document.querySelectorAll('.msg[data-msg-id]').forEach(el => updateBookmarkButtonState(el));
+      renderBookmarkList();
+    };
+  });
+
+  renderPagination();
+}
+
+function renderPagination() {
+  const pEl = $('bmPagination');
+  if (!pEl) return;
+  const totalPages = Math.ceil(bmTotal / bmPageSize) || 1;
+  if (totalPages <= 1 && bmPage === 1) { pEl.style.display = 'none'; return; }
+  pEl.style.display = 'flex';
+
+  let html = '<div class="bm-pg-info">共 ' + bmTotal + ' 条</div><div class="bm-pg-pages">';
+  if (bmPage > 1) html += '<button class="bm-pg-btn" data-page="' + (bmPage-1) + '">‹</button>';
+  html += '<span class="bm-pg-current">' + bmPage + '/' + totalPages + '</span>';
+  if (bmPage < totalPages) html += '<button class="bm-pg-btn" data-page="' + (bmPage+1) + '">›</button>';
+  html += '</div><div class="bm-pg-size"><select id="bmPageSizeSel">';
+  [5, 10, 20, 50].forEach(s => html += '<option value="' + s + '"' + (s === bmPageSize ? ' selected' : '') + '>' + s + '条/页</option>');
+  html += '</select></div>';
+
+  pEl.innerHTML = html;
+
+  pEl.querySelectorAll('.bm-pg-btn').forEach(btn => {
+    btn.onclick = () => { bmPage = parseInt(btn.dataset.page); renderBookmarkList(); };
+  });
+  const sel = $('bmPageSizeSel');
+  if (sel) sel.onchange = () => { bmPageSize = parseInt(sel.value); bmPage = 1; renderBookmarkList(); };
 }
 
 inputEl.oninput = () => {
@@ -3004,6 +3542,14 @@ async function send() {
             msgEl.appendChild(notif);
             requestAnimationFrame(() => msgEl.scrollTop = msgEl.scrollHeight);
             window.open(pageUrl, '_blank');
+          } else if (p.type === 'user_msg_id') {
+            if (lastUserMsgEl) {
+              lastUserMsgEl.dataset.msgId = p.message_id;
+              updateBookmarkButtonState(lastUserMsgEl);
+            }
+          } else if (p.type === 'assistant_msg_id') {
+            msgDiv.dataset.msgId = p.message_id;
+            updateBookmarkButtonState(msgDiv);
           }
         } catch(e) {}
       }
@@ -3156,6 +3702,18 @@ function renderStrategyData(data) {
 
 // ── 顶部导航 ──
 $('insightBtn').onclick = renderStrategyPage;
+// ── 收藏 ──
+$('bookmarkBtn').onclick = renderBookmarkList;
+$('bmClose').onclick = () => $('bmOverlay').classList.remove('open');
+$('bmOverlay').onclick = (e) => {
+  if (e.target === $('bmOverlay')) $('bmOverlay').classList.remove('open');
+};
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') {
+    $('bmOverlay').classList.remove('open');
+    $('insightOverlay').classList.remove('open');
+  }
+});
 // ── 反馈 ──
 $('feedbackBtn').onclick = () => $('fbOverlay').classList.add('open');
 $('fbClose').onclick = () => $('fbOverlay').classList.remove('open');
