@@ -1330,6 +1330,12 @@ body {
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
 }
+.top-bar-right {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
 .top-bar h1 {
   font-family: var(--font-heading);
   font-size: 16px;
@@ -1353,37 +1359,26 @@ body {
   letter-spacing: 0;
 }
 .top-bar .insight-btn {
-  background: linear-gradient(135deg, var(--accent), #cfa56a);
-  border: none;
+  background: none;
+  border: 1px solid var(--border);
   border-radius: 6px;
-  padding: 6px 16px;
+  padding: 6px 12px;
   font-size: 13px;
   font-weight: 500;
-  color: #fff;
+  color: var(--ink-light);
   cursor: pointer;
   letter-spacing: 0.04em;
-  transition: all 0.25s;
-  margin-left: 12px;
-  box-shadow: 0 1px 3px rgba(184,146,90,0.2);
-  position: relative;
-  overflow: hidden;
-}
-.top-bar .insight-btn::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.15), transparent);
-  transform: translateX(-100%);
-  transition: transform 0.5s;
-}
-.top-bar .insight-btn:hover::before {
-  transform: translateX(100%);
+  transition: all 0.15s;
+  font-family: inherit;
+  display: flex;
+  align-items: center;
+  gap: 4px;
 }
 .top-bar .insight-btn:hover {
-  box-shadow: 0 2px 8px rgba(184,146,90,0.35);
-  transform: translateY(-1px);
-  color: #fff;
+  border-color: var(--accent);
+  color: var(--accent);
 }
+
 .top-bar .bookmark-btn {
   background: none;
   border: 1px solid var(--border);
@@ -1406,7 +1401,6 @@ body {
   background: var(--accent-light);
 }
 .top-bar .user-info {
-  margin-left: auto;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -2754,12 +2748,14 @@ body {
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--ink-lighter)" stroke-width="2"><path d="M3 12h18M3 6h18M3 18h18"/></svg>
     </div>
     <h1>诸葛策</h1>
-    <button class="insight-btn" id="insightBtn"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px"><path d="M12 20V10"/><path d="M18 20V4"/><path d="M6 20v-4"/></svg>我的洞察</button>
-    <button class="bookmark-btn" id="bookmarkBtn"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:3px"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16z"/></svg>我的收藏</button>
-    <div class="user-info">
+    <div class="top-bar-right">
+      <button class="insight-btn" id="insightBtn"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px"><path d="M12 20V10"/><path d="M18 20V4"/><path d="M6 20v-4"/></svg>我的洞察</button>
+      <button class="bookmark-btn" id="bookmarkBtn"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:3px"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16z"/></svg>我的收藏</button>
+      <div class="user-info">
       <span id="userName"></span>
       <button class="logout-btn" id="logoutBtn">退出</button>
     </div>
+  </div>
   </div>
   <div class="chat-layout" id="chatLayout">
     <div class="sidebar" id="sidebar">
