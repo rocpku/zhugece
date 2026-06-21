@@ -1249,6 +1249,38 @@ body {
   justify-content: center;
   letter-spacing: 0;
 }
+.top-bar .insight-btn {
+  background: linear-gradient(135deg, var(--accent), #cfa56a);
+  border: none;
+  border-radius: 6px;
+  padding: 6px 16px;
+  font-size: 13px;
+  font-weight: 500;
+  color: #fff;
+  cursor: pointer;
+  letter-spacing: 0.04em;
+  transition: all 0.25s;
+  margin-left: 12px;
+  box-shadow: 0 1px 3px rgba(184,146,90,0.2);
+  position: relative;
+  overflow: hidden;
+}
+.top-bar .insight-btn::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.15), transparent);
+  transform: translateX(-100%);
+  transition: transform 0.5s;
+}
+.top-bar .insight-btn:hover::before {
+  transform: translateX(100%);
+}
+.top-bar .insight-btn:hover {
+  box-shadow: 0 2px 8px rgba(184,146,90,0.35);
+  transform: translateY(-1px);
+  color: #fff;
+}
 .top-bar .user-info {
   margin-left: auto;
   display: flex;
@@ -1339,53 +1371,67 @@ body {
   color: var(--accent);
 }
 
-/* ── 策论页（全屏仪表盘）── */
-.strategy-page {
+/* ── 洞察模态框 ── */
+.insight-overlay {
   display: none;
   position: fixed;
   inset: 0;
-  z-index: 50;
-  background: var(--bg);
-  overflow-y: auto;
+  z-index: 100;
+  background: rgba(0,0,0,0.3);
+  align-items: center;
+  justify-content: center;
 }
-.strategy-page.open { display: block; }
-.sp-header {
-  position: sticky;
-  top: 0;
-  z-index: 2;
+.insight-overlay.open { display: flex; }
+.insight-overlay .insight-card {
+  background: var(--bg);
+  border-radius: 16px;
+  width: 90%;
+  max-width: 680px;
+  max-height: 85vh;
+  overflow-y: auto;
+  position: relative;
+  padding: 40px 32px 32px;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.15);
+}
+.insight-overlay .insight-close {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(0,0,0,0.05);
+  color: var(--ink-lighter);
+  font-size: 16px;
+  cursor: pointer;
   display: flex;
   align-items: center;
-  gap: 16px;
-  padding: 18px 32px;
-  background: rgba(246,244,239,0.9);
-  backdrop-filter: blur(8px);
-  border-bottom: 1px solid var(--border-light);
-}
-.sp-back {
-  background: none;
-  border: 1px solid var(--border-light);
-  border-radius: 8px;
-  padding: 6px 14px;
-  font-size: 13px;
-  color: var(--ink-light);
-  cursor: pointer;
-  font-family: inherit;
+  justify-content: center;
   transition: all 0.15s;
 }
-.sp-back:hover { border-color: var(--accent); color: var(--accent); }
-.sp-title {
-  font-family: var(--font-heading);
-  font-size: 18px;
-  font-weight: 600;
+.insight-overlay .insight-close:hover {
+  background: rgba(0,0,0,0.1);
   color: var(--ink);
-  letter-spacing: 0.08em;
 }
 .sp-body {
   max-width: 640px;
   margin: 0 auto;
-  padding: 32px 24px 80px;
 }
-.sp-loading { text-align: center; color: var(--ink-lighter); padding: 80px 0; font-size: 14px; }
+.sp-loading { text-align: center; padding: 60px 0; }
+.sp-loading .sp-loading-text { font-size: 15px; color: var(--ink-light); margin-bottom: 20px; }
+.sp-loading .sp-loading-bar-wrap {
+  width: 200px; height: 4px; background: var(--border-light); border-radius: 4px;
+  margin: 0 auto; overflow: hidden;
+}
+.sp-loading .sp-loading-bar {
+  height: 100%; width: 0; background: var(--accent); border-radius: 4px;
+  animation: insightProgress 2s ease forwards;
+}
+@keyframes insightProgress {
+  from { width: 0; }
+  to { width: 100%; }
+}
 
 /* 策论卡片 */
 .sp-card {
@@ -1524,7 +1570,6 @@ body {
 @media (max-width: 700px) {
   .sp-body { padding: 20px 16px 60px; }
   .sp-card { padding: 18px; }
-  .sp-header { padding: 14px 16px; }
   .sp-dim-grid { grid-template-columns: 1fr 1fr; }
 }
 
@@ -2360,6 +2405,7 @@ body {
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--ink-lighter)" stroke-width="2"><path d="M3 12h18M3 6h18M3 18h18"/></svg>
     </div>
     <h1>诸葛策</h1>
+    <button class="insight-btn" id="insightBtn"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px"><path d="M12 20V10"/><path d="M18 20V4"/><path d="M6 20v-4"/></svg>我的洞察</button>
     <div class="user-info">
       <span id="userName"></span>
       <button class="logout-btn" id="logoutBtn">退出</button>
@@ -2370,11 +2416,10 @@ body {
       <button class="new-btn" id="newConvBtn">+ 新对话</button>
       <div class="conv-list" id="convList"></div>
       <div class="sidebar-footer">
-        <button class="fb-btn" id="strategyBtn" style="margin-bottom:4px;">策论</button>
         <button class="fb-btn" id="feedbackBtn">反馈建议</button>
       </div>
     </div>
-    <div class="chat-main">
+    <div class="chat-main" id="chatMain">
       <div class="messages" id="messages"></div>
       <div class="input-area" id="inputArea">
         <div class="input-wrap">
@@ -2387,14 +2432,13 @@ body {
   </div>
 </div>
 
-<!-- ── 策论页（全屏仪表盘）── -->
-<div class="strategy-page" id="strategyPage" style="display:none;">
-  <div class="sp-header">
-    <button class="sp-back" id="spBack">← 返回对话</button>
-    <span class="sp-title">职业策论</span>
-  </div>
-  <div class="sp-body" id="spBody">
-    <div class="sp-loading">加载中…</div>
+<!-- ── 洞察模态框 ── -->
+<div class="insight-overlay" id="insightOverlay">
+  <div class="insight-card">
+    <button class="insight-close" id="insightClose">✕</button>
+    <div class="sp-body" id="spBody">
+      <div class="sp-loading">加载中…</div>
+    </div>
   </div>
 </div>
 
@@ -2664,7 +2708,6 @@ async function initApp(convId, welcomeMsg) {
   const me = await (await fetch('/api/me')).json();
   $('userName').textContent = me.username;
   await loadConvs();
-  $('strategyBtn').textContent = '策论';
   if (convId && welcomeMsg) {
     // 新用户引导完成，显示欢迎消息
     currentConvId = convId;
@@ -3030,23 +3073,49 @@ checkAuth();
 
 function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
 
-// ── 策论页 ──
+// ── 职业洞察页 ──
 let cachedDashData = null;
 
 async function renderStrategyPage() {
-  $('strategyPage').classList.add('open');
-  $('spBody').innerHTML = '<div class="sp-loading">加载中…</div>';
-  try {
-    const res = await fetch('/api/dashboard');
-    if (!res.ok) { $('spBody').innerHTML = '<div class="sp-loading">暂无数据</div>'; return; }
-    const data = await res.json();
-    if (!data.position.name) { $('spBody').innerHTML = '<div class="sp-loading">暂无数据</div>'; return; }
-    cachedDashData = data;
-    renderStrategyData(data);
-  } catch {
-    $('spBody').innerHTML = '<div class="sp-loading">加载失败</div>';
+  $('insightOverlay').classList.add('open');
+  $('spBody').innerHTML = '<div class="sp-loading"><div class="sp-loading-text">诸葛策分析中…</div><div class="sp-loading-bar-wrap"><div class="sp-loading-bar" id="insightProgressBar"></div></div></div>';
+
+  // 并行：取数据 + 等进度条动画
+  const [data] = await Promise.all([
+    (async () => {
+      try {
+        const res = await fetch('/api/dashboard');
+        if (!res.ok) return null;
+        const d = await res.json();
+        return d.position.name ? d : null;
+      } catch { return null; }
+    })(),
+    new Promise(resolve => {
+      const bar = document.getElementById('insightProgressBar');
+      if (bar) {
+        bar.addEventListener('animationend', resolve, {once: true});
+      } else {
+        resolve();
+      }
+    }),
+  ]);
+
+  if (!data) {
+    $('spBody').innerHTML = '<div class="sp-loading"><div class="sp-loading-text">暂无数据，多聊聊建立你的职业档案吧</div></div>';
+    return;
   }
+  cachedDashData = data;
+  renderStrategyData(data);
 }
+
+function closeInsight() {
+  $('insightOverlay').classList.remove('open');
+}
+
+// 洞察弹窗关闭
+$('insightClose').onclick = closeInsight;
+$('insightOverlay').onclick = (e) => { if (e.target === $('insightOverlay')) closeInsight(); };
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeInsight(); });
 
 function renderStrategyData(data) {
   const pos = data.position;
@@ -3085,14 +3154,8 @@ function renderStrategyData(data) {
   body.innerHTML = html;
 }
 
-// ── 策论入口 ──
-$('strategyBtn').onclick = () => {
-  renderStrategyPage();
-};
-$('spBack').onclick = () => {
-  $('strategyPage').classList.remove('open');
-};
-
+// ── 顶部导航 ──
+$('insightBtn').onclick = renderStrategyPage;
 // ── 反馈 ──
 $('feedbackBtn').onclick = () => $('fbOverlay').classList.add('open');
 $('fbClose').onclick = () => $('fbOverlay').classList.remove('open');
