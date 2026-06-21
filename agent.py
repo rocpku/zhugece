@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 from openai import OpenAI
 
 from tools import TOOL_DEFINITIONS, TOOL_HANDLERS
-from memory import load_full_context, save_profile
+from memory import load_full_context, save_profile, save_journal, save_decision
 
 load_dotenv()
 
@@ -261,6 +261,8 @@ class MingYuanAgent:
 
         openai_tools = self._convert_tools()
         iteration = 0
+        called_tools = set()
+        save_memory_types = set()
 
         while iteration < MAX_TOOL_ITERATIONS:
             iteration += 1
@@ -283,6 +285,19 @@ class MingYuanAgent:
             # ── 纯文字回复 ──
             if finish == "stop":
                 text = _sanitize(message.content or "")
+                # 自动沉淀：分析后若 LLM 未主动保存，兜底保存
+                if append_to_history:
+                    if "analyze_situation" in called_tools and "journal" not in save_memory_types:
+                        save_journal({
+                            "type": "auto_situation_analysis",
+                            "content": text,
+                            "date": datetime.now().strftime("%Y-%m-%d"),
+                        })
+                    if "analyze_decision" in called_tools and "decision" not in save_memory_types:
+                        save_decision({
+                            "decision_analysis": text,
+                            "status": "auto_analyzed",
+                        })
                 if append_to_history:
                     self.messages.append({"role": "assistant", "content": text})
                 yield ("text", text)
@@ -314,6 +329,17 @@ class MingYuanAgent:
 
                 tool_names = [tc.function.name for tc in message.tool_calls]
                 yield ("tool_start", f"正在分析：{', '.join(tool_names)}")
+
+                # 跟踪工具调用，用于自动沉淀兜底
+                for tc in message.tool_calls:
+                    called_tools.add(tc.function.name)
+                    if tc.function.name == "save_memory":
+                        try:
+                            args = json.loads(_sanitize(tc.function.arguments))
+                            st = args.get("type")
+                            if st: save_memory_types.add(st)
+                        except Exception:
+                            pass
 
                 for tc in message.tool_calls:
                     handler = TOOL_HANDLERS.get(tc.function.name)
