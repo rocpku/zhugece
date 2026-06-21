@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 from openai import OpenAI
 
 from tools import TOOL_DEFINITIONS, TOOL_HANDLERS
-from memory import load_full_context
+from memory import load_full_context, save_profile
 
 load_dotenv()
 
@@ -201,11 +201,66 @@ class MingYuanAgent:
             })
         return result
 
+    def _auto_extract_profile(self, user_input: str) -> None:
+        """自动从用户消息中提取个人信息并保存到 profile。短消息/问候跳过。"""
+        if len(user_input) < 10:
+            return
+        skips = ["你好", "早上好", "晚上好", "下午好", "中午好", "晚安", "谢谢", "感谢",
+                 "好的", "嗯", "hi", "hello", "再见", "没了", "没有", "继续"]
+        stripped = user_input.strip()
+        if any(stripped.startswith(s) or stripped == s for s in skips):
+            return
+
+        ctx = load_full_context()
+        profile = ctx.get("profile", {})
+
+        prompt = f"""从用户消息中提取新的个人信息。
+
+已有档案（已有字段不要重复提取）：
+{json.dumps(profile, ensure_ascii=False)}
+
+用户消息：{user_input}
+
+如果没有任何新信息，只输出：{{}}
+如果有新信息，按以下结构输出 JSON：
+- basic.name, basic.age, basic.occupation, basic.city
+- family 相关字段
+- domains 下各维度的 status/goals/challenges
+- identity, values, life_vision
+- 其他相关字段
+
+只输出 JSON，不要其他文字。"""
+
+        try:
+            resp = self.client.chat.completions.create(
+                model=self.model,
+                max_tokens=512,
+                temperature=0,
+                messages=[{"role": "user", "content": prompt}],
+                extra_body={"enable_search": False},
+            )
+            text = (resp.choices[0].message.content or "").strip()
+            # 清理 markdown 包裹
+            if text.startswith("```"):
+                lines = text.splitlines()
+                text = "\n".join(l for l in lines if not l.startswith("```"))
+            text = text.strip()
+            if text.startswith("json"):
+                text = text[4:].strip()
+            data = json.loads(text)
+            if data and isinstance(data, dict) and any(v for v in data.values()):
+                save_profile(data)
+        except Exception:
+            pass  # 静默失败，不影响主对话
+
     def chat(self, user_input: str, append_to_history: bool = True):
         """处理用户输入，返回响应文本。每次调用 yield (type, content)。"""
         user_input = _sanitize(user_input)
         if append_to_history:
             self.messages.append({"role": "user", "content": user_input})
+
+        # 自动提取个人信息（静默执行，不影响主流程）
+        self._auto_extract_profile(user_input)
 
         openai_tools = self._convert_tools()
         iteration = 0
