@@ -776,6 +776,15 @@ async def send_message(request: Request):
 
     db = get_db()
 
+    import os as _os
+    _max_turns = int(_os.environ.get("MAX_TURNS", "50"))
+    _user_turns = db.execute(
+        "SELECT total_turns FROM users WHERE id=%s", (user["id"],)
+    ).fetchone()
+    if _user_turns and _user_turns["total_turns"] >= _max_turns:
+        db.close()
+        raise HTTPException(403, f"免费体验已达上限（{_max_turns} 轮），联系作者 roc9233 解锁")
+
     if conv_id:
         conv = db.execute("SELECT id, title FROM conversations WHERE id=%s AND user_id=%s", (conv_id, user["id"])).fetchone()
         if not conv:
@@ -802,21 +811,22 @@ async def send_message(request: Request):
     _set_user(user["username"])
     agent = get_agent_for_conv(user["id"], conv_id)
 
-    _save_message(conv_id, "user", user_message, {"role": "user", "content": user_message})
+    user_msg_id = _save_message(conv_id, "user", user_message, {"role": "user", "content": user_message})
     _update_conv_time(conv_id)
 
     full_response = ""
+    assistant_msg_id = 0
     try:
         for msg_type, content in agent.chat(user_message):
             if msg_type == "text":
                 full_response += content
         if full_response:
-            _save_message(conv_id, "assistant", full_response, {"role": "assistant", "content": full_response})
+            assistant_msg_id = _save_message(conv_id, "assistant", full_response, {"role": "assistant", "content": full_response}, user["id"])
             _update_conv_time(conv_id)
     except Exception as e:
         raise HTTPException(500, f"AI 响应出错: {e}")
 
-    return {"response": full_response, "conversation_id": conv_id}
+    return {"response": full_response, "conversation_id": conv_id, "user_msg_id": user_msg_id, "assistant_msg_id": assistant_msg_id}
 
 
 # ── 回退 API（编辑重发用：删除最后一条用户消息及其后的 AI 回复）──
