@@ -1926,7 +1926,7 @@ body {
       </div>
       <div class="lp-sub-line">
         <span class="lp-accent">融合东方智慧与现代 AI</span>
-        <span class="lp-light"> · 助你洞察自我、规划生涯、决胜未来</span>
+        <span class="lp-light"> · 专注职场生涯规划，决胜职业未来</span>
       </div>
     </div>
     <div class="lp-features">
