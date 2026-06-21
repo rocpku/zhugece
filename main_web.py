@@ -1678,15 +1678,18 @@ body {
   z-index: 1;
 }
 .landing-page .lp-hero {
+  margin-bottom: 48px;
+}
+.landing-page .lp-title-row {
   display: flex;
   align-items: center;
-  gap: 32px;
-  margin-bottom: 48px;
+  gap: 14px;
+  margin-bottom: 12px;
 }
 .landing-page .lp-logo {
   flex-shrink: 0;
-  width: 80px;
-  height: 100px;
+  width: 52px;
+  height: 65px;
   color: var(--accent);
   animation: welcomeFade 0.6s ease both;
   animation-delay: 0.05s;
@@ -1695,38 +1698,28 @@ body {
   width: 100%;
   height: 100%;
 }
-.landing-page .lp-hero-right {
-  flex: 1;
-}
 .landing-page .lp-title {
   font-family: var(--font-heading);
   font-size: 42px;
   font-weight: 700;
   color: var(--ink);
   letter-spacing: 0.15em;
-  line-height: 1.2;
-  margin-bottom: 8px;
+  line-height: 1.1;
   animation: welcomeFade 0.6s ease both;
   animation-delay: 0.1s;
-  text-align: left;
 }
-.landing-page .lp-slogan {
-  font-size: 15px;
-  color: var(--accent);
-  letter-spacing: 0.12em;
-  margin-bottom: 6px;
-  animation: welcomeFade 0.6s ease both;
-  animation-delay: 0.15s;
-  text-align: left;
-}
-.landing-page .lp-desc {
-  font-size: 13px;
-  color: var(--ink-light);
+.landing-page .lp-sub-line {
+  font-size: 14px;
   letter-spacing: 0.04em;
   line-height: 1.6;
   animation: welcomeFade 0.6s ease both;
-  animation-delay: 0.2s;
-  text-align: left;
+  animation-delay: 0.15s;
+}
+.landing-page .lp-sub-line .lp-accent {
+  color: var(--accent);
+}
+.landing-page .lp-sub-line .lp-light {
+  color: var(--ink-light);
 }
 .landing-page .lp-features {
   display: grid;
@@ -1810,9 +1803,9 @@ body {
 
 @media (max-width: 700px) {
   .landing-page { padding: 40px 20px; }
-  .landing-page .lp-hero { gap: 20px; }
-  .landing-page .lp-logo { width: 56px; height: 70px; }
+  .landing-page .lp-logo { width: 40px; height: 50px; }
   .landing-page .lp-title { font-size: 28px; }
+  .landing-page .lp-sub-line { font-size: 12px; }
   .landing-page .lp-features { gap: 10px; }
   .landing-page .lp-feature-card { padding: 14px 14px; }
   .landing-page::before { font-size: 180px; right: -20px; bottom: -20px; }
@@ -1913,31 +1906,28 @@ body {
 <div class="landing-page" id="landingPage">
   <div class="lp-inner">
     <div class="lp-hero">
-      <div class="lp-logo">
-        <svg viewBox="0 -15 100 125" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-          <!-- 纶巾帽体 -->
-          <path d="M22 52 L22 28 Q22 -4 50 -10 Q78 -4 78 28 L78 52"/>
-          <!-- 束带 -->
-          <path d="M18 52 Q50 58 82 52" stroke-width="4"/>
-          <path d="M18 48 Q50 54 82 48" stroke-width="1.8"/>
-          <!-- 纵向褶线 -->
-          <path d="M30 -6 L28 50" stroke-width="1.6" opacity="0.5"/>
-          <path d="M38 -9 L36 51" stroke-width="1.6" opacity="0.5"/>
-          <path d="M46 -10 L44 52" stroke-width="1.6" opacity="0.55"/>
-          <path d="M54 -10 L56 52" stroke-width="1.6" opacity="0.55"/>
-          <path d="M62 -9 L64 51" stroke-width="1.6" opacity="0.5"/>
-          <path d="M70 -6 L72 50" stroke-width="1.6" opacity="0.5"/>
-          <!-- 帽饰 -->
-          <rect x="47" y="52" width="6" height="5" rx="1.5" fill="currentColor" stroke="none"/>
-          <!-- 飘带 -->
-          <path d="M20 52 Q14 68 22 82 Q26 88 20 96"/>
-          <path d="M80 52 Q86 68 78 82 Q74 88 80 96"/>
-        </svg>
-      </div>
-      <div class="lp-hero-right">
+      <div class="lp-title-row">
+        <div class="lp-logo">
+          <svg viewBox="0 -15 100 125" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M22 52 L22 28 Q22 -4 50 -10 Q78 -4 78 28 L78 52"/>
+            <path d="M18 52 Q50 58 82 52" stroke-width="4"/>
+            <path d="M18 48 Q50 54 82 48" stroke-width="1.8"/>
+            <path d="M30 -6 L28 50" stroke-width="1.6" opacity="0.5"/>
+            <path d="M38 -9 L36 51" stroke-width="1.6" opacity="0.5"/>
+            <path d="M46 -10 L44 52" stroke-width="1.6" opacity="0.55"/>
+            <path d="M54 -10 L56 52" stroke-width="1.6" opacity="0.55"/>
+            <path d="M62 -9 L64 51" stroke-width="1.6" opacity="0.5"/>
+            <path d="M70 -6 L72 50" stroke-width="1.6" opacity="0.5"/>
+            <rect x="47" y="52" width="6" height="5" rx="1.5" fill="currentColor" stroke="none"/>
+            <path d="M20 52 Q14 68 22 82 Q26 88 20 96"/>
+            <path d="M80 52 Q86 68 78 82 Q74 88 80 96"/>
+          </svg>
+        </div>
         <div class="lp-title">诸葛策</div>
-        <div class="lp-slogan">融合东方智慧与现代 AI</div>
-        <div class="lp-desc">助你洞察自我、规划生涯、决胜未来</div>
+      </div>
+      <div class="lp-sub-line">
+        <span class="lp-accent">融合东方智慧与现代 AI</span>
+        <span class="lp-light"> · 助你洞察自我、规划生涯、决胜未来</span>
       </div>
     </div>
     <div class="lp-features">
