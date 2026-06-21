@@ -871,6 +871,7 @@ HTML = r"""<!DOCTYPE html>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>诸葛策 — 个人战略引擎</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 -18 100 85' fill='none' stroke='%238b7355' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M22 52 L22 28 Q22 -4 50 -10 Q78 -4 78 28 L78 52'/%3E%3Cpath d='M18 52 Q50 58 82 52' stroke-width='4'/%3E%3Cpath d='M18 48 Q50 54 82 48' stroke-width='1.8'/%3E%3Cpath d='M30 -6 L28 50' stroke-width='1.6' opacity='0.5'/%3E%3Cpath d='M38 -9 L36 51' stroke-width='1.6' opacity='0.5'/%3E%3Cpath d='M46 -10 L44 52' stroke-width='1.6' opacity='0.55'/%3E%3Cpath d='M54 -10 L56 52' stroke-width='1.6' opacity='0.55'/%3E%3Cpath d='M62 -9 L64 51' stroke-width='1.6' opacity='0.5'/%3E%3Cpath d='M70 -6 L72 50' stroke-width='1.6' opacity='0.5'/%3E%3Crect x='47' y='52' width='6' height='5' rx='1.5' fill='%238b7355' stroke='none'/%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;600;700&family=Noto+Sans+SC:wght@300;400;500&display=swap" rel="stylesheet">
 <style>
@@ -1689,7 +1690,7 @@ body {
 .landing-page .lp-logo {
   flex-shrink: 0;
   width: 52px;
-  height: 65px;
+  height: 45px;
   color: var(--accent);
   animation: welcomeFade 0.6s ease both;
   animation-delay: 0.05s;
@@ -1803,7 +1804,7 @@ body {
 
 @media (max-width: 700px) {
   .landing-page { padding: 40px 20px; }
-  .landing-page .lp-logo { width: 40px; height: 50px; }
+  .landing-page .lp-logo { width: 40px; height: 34px; }
   .landing-page .lp-title { font-size: 28px; }
   .landing-page .lp-sub-line { font-size: 12px; }
   .landing-page .lp-features { gap: 10px; }
@@ -1908,7 +1909,7 @@ body {
     <div class="lp-hero">
       <div class="lp-title-row">
         <div class="lp-logo">
-          <svg viewBox="0 -15 100 125" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <svg viewBox="0 -18 100 85" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
             <path d="M22 52 L22 28 Q22 -4 50 -10 Q78 -4 78 28 L78 52"/>
             <path d="M18 52 Q50 58 82 52" stroke-width="4"/>
             <path d="M18 48 Q50 54 82 48" stroke-width="1.8"/>
@@ -1919,8 +1920,6 @@ body {
             <path d="M62 -9 L64 51" stroke-width="1.6" opacity="0.5"/>
             <path d="M70 -6 L72 50" stroke-width="1.6" opacity="0.5"/>
             <rect x="47" y="52" width="6" height="5" rx="1.5" fill="currentColor" stroke="none"/>
-            <path d="M20 52 Q14 68 22 82 Q26 88 20 96"/>
-            <path d="M80 52 Q86 68 78 82 Q74 88 80 96"/>
           </svg>
         </div>
         <div class="lp-title">诸葛策</div>
