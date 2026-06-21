@@ -843,6 +843,130 @@ async def profile(request: Request):
     return {"exists": True, "name": p.get("basic", {}).get("name", user["username"])}
 
 
+# ── 职场仪表盘 ──
+
+@app.get("/api/dashboard")
+async def career_dashboard(request: Request):
+    user = require_user(request)
+    from memory import set_user, load_full_context, load_decisions
+    set_user(user["username"])
+    ctx = load_full_context()
+    p = ctx.get("profile", {})
+    basic = p.get("basic", {})
+    domains = p.get("domains", {})
+
+    # ── 当前职位 ──
+    position = {
+        "name": basic.get("name", ""),
+        "title": basic.get("occupation", ""),
+        "company": basic.get("company", ""),
+        "level": basic.get("level", ""),
+        "city": basic.get("city", ""),
+        "identity": p.get("identity", ""),
+    }
+
+    # ── 核心技能（从 profile 各字段提取关键词）──
+    skill_keywords = set()
+    career_info = domains.get("career", {})
+    for v in career_info.values():
+        if isinstance(v, str):
+            for kw in ["产品", "AI", "数据", "全栈", "金融", "管理", "设计", "技术", "创作", "运营", "市场", "增长"]:
+                if kw in v:
+                    skill_keywords.add(kw)
+        elif isinstance(v, dict):
+            for sv in v.values():
+                if isinstance(sv, str):
+                    for kw in ["产品", "AI", "数据", "全栈", "金融", "管理", "设计", "技术", "创作", "运营", "市场", "增长"]:
+                        if kw in sv:
+                            skill_keywords.add(kw)
+    # 从身份定义提取
+    for field in ["identity", "self_definition", "previous_definition"]:
+        val = p.get(field, "")
+        if isinstance(val, str):
+            for kw in ["产品", "AI", "数据", "全栈", "金融", "管理", "设计", "技术", "创作", "运营", "市场", "增长"]:
+                if kw in val:
+                    skill_keywords.add(kw)
+    skills = sorted(skill_keywords) if skill_keywords else ["待完善"]
+
+    # ── 职业阶段（根据 level 和年龄粗略推断）──
+    level = str(basic.get("level", "")).lower()
+    age = basic.get("age", 0)
+    if any(l in level for l in ["p8", "p9", "p10", "总监", "vp", "director"]):
+        stage_label, stage_progress = "成熟期", 80
+    elif any(l in level for l in ["p6", "p7", "高级", "senior", "专家", "资深"]):
+        stage_label, stage_progress = "成长期", 55
+    elif any(l in level for l in ["p5", "p4", "中级", "初级", "entry"]):
+        stage_label, stage_progress = "筑基期", 35
+    elif age and age <= 28:
+        stage_label, stage_progress = "探索期", 20
+    else:
+        stage_label, stage_progress = "成长期", 50
+
+    # 从 career_info 中找更精确的阶段
+    for v in career_info.values():
+        if isinstance(v, str):
+            if "转行" in v or "转型" in v:
+                stage_label, stage_progress = "转型期", 40
+                break
+            if "创业" in v or "副业" in v:
+                stage_progress = min(stage_progress + 10, 90)
+
+    # ── 活跃目标 ──
+    known_goals = []
+    # 从 career_info 提取
+    if career_info.get("xiaohongshu_progress"):
+        known_goals.append({"title": "小红书内容输出", "status": "active"})
+    products = career_info.get("products", [])
+    for prod in products if isinstance(products, list) else [products] if isinstance(products, dict) else []:
+        if isinstance(prod, dict) and prod.get("description"):
+            known_goals.append({"title": prod["description"][:30], "status": "active"})
+    # 从 mission/values 推断
+    if p.get("mission"):
+        known_goals.append({"title": "践行人生使命", "status": "active"})
+    goals = known_goals[:4] if known_goals else [{"title": "完善职业档案", "status": "pending"}]
+
+    # ── 关联维度 ──
+    dim_map = {
+        "finance": {"label": "财务", "key": "finance"},
+        "family": {"label": "家庭", "key": "family"},
+        "health": {"label": "健康", "key": "health"},
+        "learning": {"label": "学习", "key": "learning"},
+        "social": {"label": "社交", "key": "social"},
+        "spiritual": {"label": "精神", "key": "spiritual"},
+    }
+    dimensions = {}
+    for dim_id, dim_info in dim_map.items():
+        dim_data = domains.get(dim_id, {}) or p.get(dim_id, {})
+        if isinstance(dim_data, dict) and any(v for v in dim_data.values()):
+            dimensions[dim_id] = {"label": dim_info["label"], "status": "good"}
+        else:
+            dimensions[dim_id] = {"label": dim_info["label"], "status": "unknown"}
+
+    # ── 近期里程碑 ──
+    decisions = load_decisions(5)
+    milestones = []
+    for d in decisions:
+        title = d.get("decision", "")[:40]
+        if title:
+            milestones.append({
+                "title": title,
+                "type": "decision",
+                "date": d.get("_saved_at", "")[:10],
+            })
+    # 检查 career_info 中的里程碑
+    if career_info.get("identity_detail"):
+        milestones.insert(0, {"title": "职业身份定位完成", "type": "achievement"})
+
+    return {
+        "position": position,
+        "stage": {"label": stage_label, "progress": stage_progress},
+        "skills": skills,
+        "goals": goals,
+        "dimensions": dimensions,
+        "milestones": milestones[:5],
+    }
+
+
 # ── 反馈 ──
 
 @app.post("/api/feedback")
@@ -1213,6 +1337,195 @@ body {
 .sidebar .fb-btn:hover {
   border-color: var(--accent);
   color: var(--accent);
+}
+
+/* ── 策论页（全屏仪表盘）── */
+.strategy-page {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: var(--bg);
+  overflow-y: auto;
+}
+.strategy-page.open { display: block; }
+.sp-header {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 18px 32px;
+  background: rgba(246,244,239,0.9);
+  backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--border-light);
+}
+.sp-back {
+  background: none;
+  border: 1px solid var(--border-light);
+  border-radius: 8px;
+  padding: 6px 14px;
+  font-size: 13px;
+  color: var(--ink-light);
+  cursor: pointer;
+  font-family: inherit;
+  transition: all 0.15s;
+}
+.sp-back:hover { border-color: var(--accent); color: var(--accent); }
+.sp-title {
+  font-family: var(--font-heading);
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--ink);
+  letter-spacing: 0.08em;
+}
+.sp-body {
+  max-width: 640px;
+  margin: 0 auto;
+  padding: 32px 24px 80px;
+}
+.sp-loading { text-align: center; color: var(--ink-lighter); padding: 80px 0; font-size: 14px; }
+
+/* 策论卡片 */
+.sp-card {
+  background: var(--surface);
+  border: 1px solid var(--border-light);
+  border-radius: 12px;
+  padding: 24px 28px;
+  margin-bottom: 16px;
+}
+.sp-card h3 {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-lighter);
+  letter-spacing: 0.06em;
+  margin: 0 0 14px;
+  text-transform: uppercase;
+}
+
+/* 职位卡 */
+.sp-pos-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+.sp-avatar {
+  width: 48px; height: 48px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 20px; font-weight: 600;
+  flex-shrink: 0;
+}
+.sp-pos-info { min-width: 0; }
+.sp-pos-name { font-size: 18px; font-weight: 600; color: var(--ink); }
+.sp-pos-title { font-size: 14px; color: var(--ink-light); margin-top: 2px; }
+.sp-pos-identity { font-size: 13px; color: var(--accent); margin-top: 4px; }
+
+/* 阶段 */
+.sp-stage-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.sp-stage-label { font-size: 14px; color: var(--ink-light); white-space: nowrap; }
+.sp-stage-bar {
+  flex: 1; height: 6px;
+  background: var(--border-light);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.sp-stage-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent), #c9a96e);
+  border-radius: 6px;
+  transition: width 0.8s ease;
+}
+.sp-stage-pct { font-size: 13px; color: var(--ink-lighter); width: 36px; text-align: right; }
+
+/* 技能 */
+.sp-skills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.sp-skill-tag {
+  padding: 4px 12px;
+  background: var(--accent-light);
+  color: var(--accent);
+  border-radius: 6px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+/* 目标 */
+.sp-goal-list { list-style: none; padding: 0; margin: 0; }
+.sp-goal-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  font-size: 14px;
+  color: var(--ink);
+  border-bottom: 1px solid var(--border-light);
+}
+.sp-goal-item:last-child { border-bottom: none; }
+.sp-goal-dot {
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.sp-goal-dot.active { background: #4caf50; }
+.sp-goal-dot.pending { background: var(--ink-lighter); }
+
+/* 维度网格 */
+.sp-dim-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 8px;
+}
+.sp-dim-item {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border-light);
+  font-size: 13px;
+  color: var(--ink-light);
+}
+.sp-dim-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.sp-dim-dot.good { background: #4caf50; }
+.sp-dim-dot.unknown { background: var(--ink-lighter); box-shadow: inset 0 0 0 1px rgba(0,0,0,0.1); }
+
+/* 里程碑 */
+.sp-ms-list { margin: 0; }
+.sp-ms-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border-light);
+  font-size: 13px;
+  color: var(--ink);
+  line-height: 1.4;
+}
+.sp-ms-item:last-child { border-bottom: none; }
+.sp-ms-icon { font-size: 14px; margin-top: 1px; flex-shrink: 0; }
+.sp-ms-text { flex: 1; min-width: 0; }
+.sp-ms-date { color: var(--ink-lighter); font-size: 12px; white-space: nowrap; margin-left: 8px; }
+
+@media (max-width: 700px) {
+  .sp-body { padding: 20px 16px 60px; }
+  .sp-card { padding: 18px; }
+  .sp-header { padding: 14px 16px; }
+  .sp-dim-grid { grid-template-columns: 1fr 1fr; }
 }
 
 /* 反馈模态框 */
@@ -2057,6 +2370,7 @@ body {
       <button class="new-btn" id="newConvBtn">+ 新对话</button>
       <div class="conv-list" id="convList"></div>
       <div class="sidebar-footer">
+        <button class="fb-btn" id="strategyBtn" style="margin-bottom:4px;">策论</button>
         <button class="fb-btn" id="feedbackBtn">反馈建议</button>
       </div>
     </div>
@@ -2070,6 +2384,17 @@ body {
         </div>
       </div>
     </div>
+  </div>
+</div>
+
+<!-- ── 策论页（全屏仪表盘）── -->
+<div class="strategy-page" id="strategyPage" style="display:none;">
+  <div class="sp-header">
+    <button class="sp-back" id="spBack">← 返回对话</button>
+    <span class="sp-title">职业策论</span>
+  </div>
+  <div class="sp-body" id="spBody">
+    <div class="sp-loading">加载中…</div>
   </div>
 </div>
 
@@ -2339,6 +2664,7 @@ async function initApp(convId, welcomeMsg) {
   const me = await (await fetch('/api/me')).json();
   $('userName').textContent = me.username;
   await loadConvs();
+  $('strategyBtn').textContent = '策论';
   if (convId && welcomeMsg) {
     // 新用户引导完成，显示欢迎消息
     currentConvId = convId;
@@ -2701,6 +3027,71 @@ $('menuBtn').onclick = () => {
 };
 
 checkAuth();
+
+function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+
+// ── 策论页 ──
+let cachedDashData = null;
+
+async function renderStrategyPage() {
+  $('strategyPage').classList.add('open');
+  $('spBody').innerHTML = '<div class="sp-loading">加载中…</div>';
+  try {
+    const res = await fetch('/api/dashboard');
+    if (!res.ok) { $('spBody').innerHTML = '<div class="sp-loading">暂无数据</div>'; return; }
+    const data = await res.json();
+    if (!data.position.name) { $('spBody').innerHTML = '<div class="sp-loading">暂无数据</div>'; return; }
+    cachedDashData = data;
+    renderStrategyData(data);
+  } catch {
+    $('spBody').innerHTML = '<div class="sp-loading">加载失败</div>';
+  }
+}
+
+function renderStrategyData(data) {
+  const pos = data.position;
+  const body = $('spBody');
+
+  let html = '';
+
+  // 职位卡
+  const avatar = (pos.name || '?')[0];
+  html += `<div class="sp-card"><div class="sp-pos-row"><div class="sp-avatar">${avatar}</div><div class="sp-pos-info"><div class="sp-pos-name">${esc(pos.name)}</div><div class="sp-pos-title">${esc([pos.title, pos.company, pos.level].filter(Boolean).join(' · '))}${pos.city ? ' · '+esc(pos.city) : ''}</div>${pos.identity ? '<div class="sp-pos-identity">'+esc(pos.identity)+'</div>' : ''}</div></div></div>`;
+
+  // 阶段
+  const st = data.stage;
+  html += `<div class="sp-card"><h3>职业阶段</h3><div class="sp-stage-row"><span class="sp-stage-label">${esc(st.label)}</span><div class="sp-stage-bar"><div class="sp-stage-fill" style="width:${st.progress}%"></div></div><span class="sp-stage-pct">${st.progress}%</span></div></div>`;
+
+  // 技能
+  if (data.skills && data.skills.length) {
+    html += `<div class="sp-card"><h3>核心能力</h3><div class="sp-skills">${data.skills.map(s => `<span class="sp-skill-tag">${esc(s)}</span>`).join('')}</div></div>`;
+  }
+
+  // 目标
+  if (data.goals && data.goals.length) {
+    html += `<div class="sp-card"><h3>当前目标</h3><ul class="sp-goal-list">${data.goals.map(g => `<li class="sp-goal-item"><span class="sp-goal-dot ${g.status}"></span>${esc(g.title)}</li>`).join('')}</ul></div>`;
+  }
+
+  // 关联维度
+  if (data.dimensions) {
+    html += `<div class="sp-card"><h3>关联维度</h3><div class="sp-dim-grid">${Object.values(data.dimensions).map(d => `<div class="sp-dim-item"><span class="sp-dim-dot ${d.status}"></span>${esc(d.label)}</div>`).join('')}</div></div>`;
+  }
+
+  // 里程碑
+  if (data.milestones && data.milestones.length) {
+    html += `<div class="sp-card"><h3>决策与里程碑</h3><div class="sp-ms-list">${data.milestones.map(m => `<div class="sp-ms-item"><span class="sp-ms-icon">${m.type === 'achievement' ? '✦' : '◆'}</span><span class="sp-ms-text">${esc(m.title)}</span>${m.date ? '<span class="sp-ms-date">'+esc(m.date)+'</span>' : ''}</div>`).join('')}</div></div>`;
+  }
+
+  body.innerHTML = html;
+}
+
+// ── 策论入口 ──
+$('strategyBtn').onclick = () => {
+  renderStrategyPage();
+};
+$('spBack').onclick = () => {
+  $('strategyPage').classList.remove('open');
+};
 
 // ── 反馈 ──
 $('feedbackBtn').onclick = () => $('fbOverlay').classList.add('open');
