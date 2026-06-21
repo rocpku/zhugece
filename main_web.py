@@ -1346,17 +1346,7 @@ body {
   gap: 8px;
 }
 .top-bar h1::before {
-  content: '策';
-  font-family: var(--font-heading);
-  font-size: 12px;
-  color: var(--accent);
-  background: var(--accent-light);
-  width: 22px; height: 22px;
-  border-radius: 4px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  letter-spacing: 0;
+  display: none;
 }
 .top-bar .insight-btn {
   background: none;
@@ -2316,7 +2306,35 @@ body {
 }
 /* Sidebar toggle on desktop */
 .sidebar.collapsed { display:none; }
-.chat-layout.sidebar-collapsed .chat-main { max-width:100%; }
+.chat-layout.sidebar-collapsed .chat-main {
+  max-width: 100%;
+  position: relative;
+}
+.chat-layout.sidebar-collapsed .chat-main::before {
+  content: '◀';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 18px;
+  height: 36px;
+  cursor: pointer;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  color: var(--ink-lighter);
+  background: var(--surface);
+  border-radius: 0 6px 6px 0;
+  border: 1px solid var(--border);
+  border-left: none;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+.chat-layout.sidebar-collapsed .chat-main:hover::before {
+  opacity: 1;
+}
 .auth-card .sq-section { margin-top:16px; padding-top:16px; border-top:1px solid var(--border-light); }
 .auth-card .sq-section .sq-title { font-size:13px; color:var(--ink-light); margin-bottom:10px; font-weight:500; }
 .auth-card .sq-row { margin-bottom:10px; }
@@ -3612,12 +3630,19 @@ $('logoutBtn').onclick = async () => {
 };
 
 // ── Sidebar toggle ──
-$('menuBtn').onclick = () => {
+function toggleSidebar() {
   if (window.innerWidth <= 700) {
     $('sidebar').classList.toggle('open');
   } else {
     $('sidebar').classList.toggle('collapsed');
     $('chatLayout').classList.toggle('sidebar-collapsed');
+  }
+}
+$('menuBtn').onclick = toggleSidebar;
+// 侧边栏收起时，点击页面左侧也可展开
+$('chatLayout').onclick = (e) => {
+  if ($('sidebar').classList.contains('collapsed') && e.clientX < 30) {
+    toggleSidebar();
   }
 };
 
