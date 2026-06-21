@@ -3252,6 +3252,22 @@ function addMessage(role, content, rawText, msgId) {
   return div;
 }
 
+/**
+ * 更新 agent 消息框的显示内容，确保 .msg-agent-wrap（背景/圆角/内边距）
+ * 和 .msg-actions（收藏按钮）始终存在。
+ */
+function updateAgentContent(msgDiv, htmlContent) {
+  let wrap = msgDiv.querySelector('.msg-agent-wrap');
+  if (!wrap) {
+    msgDiv.innerHTML = '<div class="msg-agent-wrap"></div>'
+      + '<div class="msg-actions"><button class="bm-btn" title="收藏">' + BM_SVG + '</button></div>';
+    wrap = msgDiv.querySelector('.msg-agent-wrap');
+    const bm = msgDiv.querySelector('.bm-btn');
+    if (bm) bm.onclick = () => toggleBookmark(msgDiv, 'agent');
+  }
+  wrap.innerHTML = htmlContent;
+}
+
 function startEdit(msgDiv) {
   const origText = msgDiv.dataset.rawText || '';
   msgDiv.className = 'msg user editing';
@@ -3524,7 +3540,10 @@ async function send() {
   }
 
   abortController = new AbortController();
+  let sseTimedOut = false;
   stopBtn.onclick = () => { abortController.abort(); };
+  // SSE 超时：30 秒未收到完整响应则切到非流式
+  const sseTimer = setTimeout(() => { sseTimedOut = true; abortController.abort(); }, 30000);
 
   try {
     const resp = await fetch('/api/chat', {
@@ -3538,13 +3557,15 @@ async function send() {
         const errData = await resp.json();
         throw new Error('QUOTA_EXCEEDED:' + (errData.detail || '免费体验已达上限'));
       }
-      throw new Error('请求失败');
+      throw new Error('SSE_FAILED:' + resp.status);
     }
     const reader = resp.body.getReader();
     const decoder = new TextDecoder();
     while (true) {
       const {done, value} = await reader.read();
       if (done) break;
+      // 收到数据则重置超时
+      clearTimeout(sseTimer);
       for (const line of decoder.decode(value, {stream:true}).split('\n')) {
         if (!line.startsWith('data: ')) continue;
         const data = line.slice(6);
@@ -3554,7 +3575,7 @@ async function send() {
           if (p.type === 'text') {
             hideToolStatus();
             content += p.content;
-            msgDiv.innerHTML = marked.parse(content).replace(/<a\s+href=/g, '<a target="_blank" href=');
+            updateAgentContent(msgDiv, marked.parse(content).replace(/<a\s+href=/g, '<a target="_blank" href='));
           } else if (p.type === 'tool_start') {
             showToolStatus('⏳ ' + escapeHtml(p.content));
           } else if (p.type === 'render_done') {
@@ -3579,28 +3600,67 @@ async function send() {
       }
       requestAnimationFrame(() => msgEl.scrollTop = msgEl.scrollHeight);
     }
+    clearTimeout(sseTimer);
   } catch(e) {
-    if (e.name === 'AbortError') {
+    clearTimeout(sseTimer);
+    if (e.name === 'AbortError' && !sseTimedOut) {
+      // 用户主动停止
       wasAborted = true;
       hideToolStatus();
       if (content) {
-        msgDiv.innerHTML = marked.parse(content + '\n\n> ⏸️ **已停止**').replace(/<a\s+href=/g, '<a target="_blank" href=');
+        updateAgentContent(msgDiv, marked.parse(content + '\n\n> ⏸️ **已停止**').replace(/<a\s+href=/g, '<a target="_blank" href='));
       } else {
         msgDiv.innerHTML = '<p style="color:var(--ink-lighter);font-style:italic;font-size:13px;">⏸️ 已停止</p>';
       }
+    } else if (e.message && e.message.startsWith('QUOTA_EXCEEDED:')) {
+      const detail = e.message.slice('QUOTA_EXCEEDED:'.length);
+      msgDiv.innerHTML = '<div style="text-align:center;padding:24px 16px;color:var(--ink-lighter);">'
+        + '<svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="opacity:0.4;margin-bottom:8px;"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>'
+        + '<p style="font-size:15px;margin:4px 0;">' + escapeHtml(detail) + '</p>'
+        + '<p style="font-size:12px;margin:4px 0;">如需继续使用，请联系作者</p>'
+        + '</div>';
+      inputEl.disabled = true;
+      sendBtn.disabled = true;
     } else {
-      if (e.message && e.message.startsWith('QUOTA_EXCEEDED:')) {
-        const detail = e.message.slice('QUOTA_EXCEEDED:'.length);
-        msgDiv.innerHTML = '<div style="text-align:center;padding:24px 16px;color:var(--ink-lighter);">'
-          + '<svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="opacity:0.4;margin-bottom:8px;"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>'
-          + '<p style="font-size:15px;margin:4px 0;">' + escapeHtml(detail) + '</p>'
-          + '<p style="font-size:12px;margin:4px 0;">如需继续使用，请联系作者</p>'
-          + '</div>';
-        // 永久禁用输入
-        inputEl.disabled = true;
-        sendBtn.disabled = true;
-      } else {
-        msgDiv.innerHTML = '<p style="color:#b33;">连接失败，请确认服务器正在运行</p>';
+      // SSE 失败 → 降级到非流式接口
+      hideToolStatus();
+      updateAgentContent(msgDiv, '<div class="thinking-dots"><span></span><span></span><span></span></div>');
+      try {
+        const fbResp = await fetch('/api/send', {
+          method: 'POST',
+          headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({message: text, conversation_id: currentConvId}),
+          signal: abortController.signal,
+        });
+        if (!fbResp.ok) {
+          if (fbResp.status === 403) throw new Error('QUOTA_EXCEEDED:' + ((await fbResp.json()).detail || ''));
+          throw new Error('fallback failed');
+        }
+        const fbData = await fbResp.json();
+        content = fbData.response || '';
+        updateAgentContent(msgDiv, marked.parse(content).replace(/<a\s+href=/g, '<a target="_blank" href='));
+        if (fbData.user_msg_id && lastUserMsgEl) {
+          lastUserMsgEl.dataset.msgId = fbData.user_msg_id;
+          updateBookmarkButtonState(lastUserMsgEl);
+        }
+        if (fbData.assistant_msg_id) {
+          msgDiv.dataset.msgId = fbData.assistant_msg_id;
+          updateBookmarkButtonState(msgDiv);
+        }
+        requestAnimationFrame(() => msgEl.scrollTop = msgEl.scrollHeight);
+      } catch(fbErr) {
+        if (fbErr.message && fbErr.message.startsWith('QUOTA_EXCEEDED:')) {
+          const detail = fbErr.message.slice('QUOTA_EXCEEDED:'.length);
+          msgDiv.innerHTML = '<div style="text-align:center;padding:24px 16px;color:var(--ink-lighter);">'
+            + '<svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="opacity:0.4;margin-bottom:8px;"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>'
+            + '<p style="font-size:15px;margin:4px 0;">' + escapeHtml(detail) + '</p>'
+            + '<p style="font-size:12px;margin:4px 0;">如需继续使用，请联系作者</p>'
+            + '</div>';
+          inputEl.disabled = true;
+          sendBtn.disabled = true;
+        } else {
+          msgDiv.innerHTML = '<p style="color:#b33;">连接失败，请确认服务器正在运行</p>';
+        }
       }
     }
   }
