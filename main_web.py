@@ -125,6 +125,20 @@ def init_db():
         """)
     except Exception:
         pass
+
+    # 清理指定测试/废弃用户
+    for _del_user in ["shoubiao", "test"]:
+        _du = db.execute("SELECT id FROM users WHERE username=%s", (_del_user,)).fetchone()
+        if _du:
+            _uid = _du["id"]
+            db.execute("DELETE FROM messages WHERE conversation_id IN (SELECT id FROM conversations WHERE user_id=%s)", (_uid,))
+            db.execute("DELETE FROM conversations WHERE user_id=%s", (_uid,))
+            db.execute("DELETE FROM sessions WHERE user_id=%s", (_uid,))
+            for _tbl in ["profiles", "journal", "decisions"]:
+                db.execute(f"DELETE FROM {_tbl} WHERE user_id=%s", (_del_user,))
+            db.execute("DELETE FROM user_questions WHERE username=%s", (_del_user,))
+            db.execute("DELETE FROM users WHERE id=%s", (_uid,))
+
     db.commit()
     db.close()
 
