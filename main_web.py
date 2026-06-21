@@ -920,6 +920,7 @@ body {
   padding: 20px;
 }
 .auth-card {
+  position: relative;
   background: var(--surface);
   padding: 48px 40px 36px;
   border-radius: 16px;
@@ -1824,20 +1825,23 @@ body {
   justify-content: center;
 }
 .auth-overlay.open { display: flex; }
-.auth-overlay .auth-close {
+.auth-card .auth-close {
   position: absolute;
-  top: 16px; right: 20px;
-  background: none;
+  top: 12px; right: 12px;
+  z-index: 10;
+  background: rgba(0,0,0,0.06);
   border: none;
-  font-size: 22px;
-  color: var(--ink-lighter);
+  font-size: 20px;
+  color: var(--ink-light);
   cursor: pointer;
-  padding: 4px 8px;
+  width: 32px; height: 32px;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 50%;
   line-height: 1;
-  border-radius: 4px;
+  transition: background 0.15s;
 }
-.auth-overlay .auth-close:hover {
-  background: var(--border-light);
+.auth-card .auth-close:hover {
+  background: rgba(0,0,0,0.12);
   color: var(--ink);
 }
 .auth-overlay.open .auth-card {
@@ -1968,8 +1972,8 @@ body {
 
 <!-- ── Auth Overlay ── -->
 <div class="auth-overlay" id="authOverlay">
-  <button class="auth-close" id="authClose">✕</button>
   <div class="auth-card login-mode" id="authCard">
+    <button class="auth-close" id="authClose">✕</button>
     <div class="seal" id="authSeal">策</div>
     <h1 id="authTitle">诸葛策</h1>
     <div class="sub" id="authSub">谋定而后动</div>
@@ -2157,6 +2161,7 @@ $('landingLoginBtn').onclick = () => openAuth('login');
 $('landingRegisterBtn').onclick = () => openAuth('register');
 $('authClose').onclick = () => overlay.classList.remove('open');
 overlay.onclick = (e) => { if (e.target === overlay) overlay.classList.remove('open'); };
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') overlay.classList.remove('open'); });
 
 $('authToggle').onclick = () => {
   const isLogin = authMode === 'login';
