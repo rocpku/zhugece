@@ -2430,7 +2430,7 @@ body {
   animation-delay: 0.1s;
 }
 .landing-page .lp-sub-line {
-  font-size: 14px;
+  font-size: 15px;
   letter-spacing: 0.04em;
   line-height: 1.6;
   animation: welcomeFade 0.6s ease both;
@@ -2648,8 +2648,8 @@ body {
         <div class="lp-title">诸葛策</div>
       </div>
       <div class="lp-sub-line">
-        <span class="lp-accent">融合东方智慧与现代 AI</span>
-        <span class="lp-light"> · 洞察自我、规划职场生涯</span>
+        <span class="lp-accent">知趋势，更知己</span>
+        <span class="lp-light"> —— 融合东方智慧与现代 AI，成为你职业上升期的专属参谋</span>
       </div>
     </div>
     <div class="lp-features">
@@ -2658,28 +2658,28 @@ body {
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
         </div>
         <div class="lp-fc-title">生涯战略</div>
-        <div class="lp-fc-desc">结合命理与规划，洞察人生方向，做出真正适合你的长期选择</div>
+        <div class="lp-fc-desc">融合东方命理智慧，AI 驱动长期职业规划，洞察人生方向</div>
       </div>
       <div class="lp-feature-card">
-        <div class="lp-fc-icon" style="background:#e8e0d8;color:#6b6258;">
+        <div class="lp-fc-icon" style="background:#d8e5ea;color:#4a7a8a;">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M20 21a8 8 0 1 0-16 0"/></svg>
         </div>
         <div class="lp-fc-title">自我认知</div>
-        <div class="lp-fc-desc">深度用户画像分析，发现优势盲区，建立清晰的自我定位</div>
+        <div class="lp-fc-desc">持久记忆构建动态画像，AI 持续追踪你的成长轨迹与优势变化</div>
       </div>
       <div class="lp-feature-card">
-        <div class="lp-fc-icon" style="background:var(--accent-light);color:var(--accent);">
+        <div class="lp-fc-icon" style="background:#e0dfe8;color:#5a5a7a;">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
         </div>
         <div class="lp-fc-title">决策参谋</div>
-        <div class="lp-fc-desc">关键选择时刻，多维分析利弊，让你每次决定都有底气</div>
+        <div class="lp-fc-desc">关键选择多维分析推演，生成可视化报告，让你每次决定都有底气</div>
       </div>
       <div class="lp-feature-card">
-        <div class="lp-fc-icon" style="background:#e8e0d8;color:#6b6258;">
+        <div class="lp-fc-icon" style="background:#e8ddd0;color:#8a6a4a;">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-9-9" stroke-linecap="round"/><path d="M21 3v6h-6"/></svg>
         </div>
         <div class="lp-fc-title">运势洞察</div>
-        <div class="lp-fc-desc">把握时机节奏，顺势而为，在对的时间做对的事</div>
+        <div class="lp-fc-desc">AI 命理排盘，结合大运流年，把握时机顺势而为</div>
       </div>
     </div>
     <div class="lp-actions">
